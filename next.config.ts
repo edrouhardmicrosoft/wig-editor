@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Transpile sandpack packages for better Turbopack compatibility
+  transpilePackages: [
+    "@codesandbox/sandpack-react",
+    "@codesandbox/sandpack-client",
+  ],
 };
 
 export default nextConfig;

@@ -1,0 +1,32 @@
+name: Figma Sync
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: figma-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  figma-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read tokens.json placeholder
+        shell: bash
+        run: |
+          if [ -f tokens.json ]; then
+            echo "Found tokens.json (size: $(wc -c < tokens.json) bytes)"
+            echo "would sync tokens"
+          else
+            echo "tokens.json not found"
+            echo "would sync tokens"
+          fi
