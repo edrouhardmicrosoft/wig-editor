@@ -5,6 +5,7 @@ import {
   SandpackPreview,
   SandpackProvider,
   useSandpack,
+  useActiveCode,
 } from "@codesandbox/sandpack-react";
 import {
   ChevronsLeft,
@@ -16,6 +17,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEditorStore, useSelectedElement, type ElementStyles } from "@/lib/store/editor-store";
 
 const APP_CODE = `export default function App() {
   return (
@@ -39,7 +41,7 @@ const APP_CODE = `export default function App() {
 }
 `;
 
-function generateAppCode(styles: { backgroundColor: string; color: string; borderRadiusPx: number }) {
+function generateAppCode(styles: ElementStyles) {
   return `export default function App() {
   return (
     <div style={{ padding: 16, fontFamily: "system-ui" }}>
@@ -63,6 +65,34 @@ function generateAppCode(styles: { backgroundColor: string; color: string; borde
 `;
 }
 
+function parseStylesFromCode(code: string): Partial<ElementStyles> | null {
+  try {
+    const styles: Partial<ElementStyles> = {};
+
+    // Parse background color: background: "..." or background: '...'
+    const bgMatch = code.match(/background:\s*["']([^"']+)["']/);
+    if (bgMatch) {
+      styles.backgroundColor = bgMatch[1];
+    }
+
+    // Parse text color: color: "..." or color: '...'
+    const colorMatch = code.match(/color:\s*["']([^"']+)["']/);
+    if (colorMatch) {
+      styles.color = colorMatch[1];
+    }
+
+    // Parse border radius: borderRadius: 123 (number, no quotes)
+    const radiusMatch = code.match(/borderRadius:\s*(\d+)/);
+    if (radiusMatch) {
+      styles.borderRadiusPx = parseInt(radiusMatch[1], 10);
+    }
+
+    return Object.keys(styles).length > 0 ? styles : null;
+  } catch {
+    return null;
+  }
+}
+
 type SidebarSide = "left" | "right";
 
 type SidebarView = "chat" | "editor";
@@ -78,16 +108,6 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
-};
-
-type SelectedElement = {
-  kind: "button";
-  label: string;
-  styles: {
-    backgroundColor: string;
-    color: string;
-    borderRadiusPx: number;
-  };
 };
 
 type LocalStorageState<T> = {
@@ -130,7 +150,10 @@ function useLocalStorageState<T>(key: string, initialValue: T): LocalStorageStat
     [key],
   );
 
-  return { value, setValue: setAndPersist, hydrated };
+  return useMemo(
+    () => ({ value, setValue: setAndPersist, hydrated }),
+    [value, setAndPersist, hydrated],
+  );
 }
 
 function SettingsModal(props: {
@@ -517,8 +540,15 @@ function ChatSidebar(props: {
 
 function PlaygroundShell() {
   const { sandpack } = useSandpack();
+  const { code: activeCode } = useActiveCode();
 
-  const [selectedElement, setSelectedElement] = useState<SelectedElement | null>(null);
+  const selectedElement = useSelectedElement();
+  const selectedElementId = useEditorStore((state) => state.selectedElementId);
+  const selectElement = useEditorStore((state) => state.selectElement);
+  const deselectElement = useEditorStore((state) => state.deselectElement);
+  const updateElementStyles = useEditorStore((state) => state.updateElementStyles);
+
+  const isUpdatingFromStoreRef = useRef(false);
 
   const sidebarOpen = useLocalStorageState<boolean>("wig.sidebar.open", true);
   const sidebarSide = useLocalStorageState<SidebarSide>("wig.sidebar.side", "right");
@@ -545,7 +575,7 @@ function PlaygroundShell() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setSelectedElement(null);
+        deselectElement();
         return;
       }
 
@@ -568,18 +598,44 @@ function PlaygroundShell() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [swapSidebarSide, sidebarOpen]);
+  }, [swapSidebarSide, sidebarOpen, deselectElement]);
 
+  const prevSelectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const wasSelected = prevSelectedIdRef.current != null;
+    const isSelected = selectedElementId != null;
+    prevSelectedIdRef.current = selectedElementId;
+
+    if (!wasSelected && isSelected) {
+      sidebarOpen.setValue(true);
+      sidebarView.setValue("editor");
+    }
+  }, [selectedElementId, sidebarOpen, sidebarView]);
+
+  // Store → Sandpack: push store styles to code editor
   useEffect(() => {
     if (selectedElement == null) return;
-    sidebarOpen.setValue(true);
-    sidebarView.setValue("editor");
-  }, [selectedElement, sidebarOpen, sidebarView]);
-
-  useEffect(() => {
-    if (selectedElement == null) return;
+    
+    isUpdatingFromStoreRef.current = true;
     sandpack.updateFile("/App.js", generateAppCode(selectedElement.styles));
-  }, [selectedElement, sandpack]);
+    
+    const timeout = setTimeout(() => {
+      isUpdatingFromStoreRef.current = false;
+    }, 0);
+    
+    return () => clearTimeout(timeout);
+  }, [selectedElement?.styles.backgroundColor, selectedElement?.styles.color, selectedElement?.styles.borderRadiusPx, sandpack]);
+
+  // Sandpack → Store: parse code changes back to store (uses useActiveCode for reactivity)
+  useEffect(() => {
+    if (isUpdatingFromStoreRef.current) return;
+    if (selectedElementId == null) return;
+
+    const parsed = parseStylesFromCode(activeCode);
+    if (parsed) {
+      updateElementStyles(selectedElementId, parsed);
+    }
+  }, [activeCode, selectedElementId, updateElementStyles]);
 
   const side: SidebarSide = sidebarSide.value;
   const isOpen = sidebarOpen.value;
@@ -695,14 +751,7 @@ function PlaygroundShell() {
                               type="color"
                               value={selectedElement.styles.backgroundColor}
                               onChange={(e) =>
-                                setSelectedElement((prev) =>
-                                  prev == null
-                                    ? prev
-                                    : {
-                                        ...prev,
-                                        styles: { ...prev.styles, backgroundColor: e.target.value },
-                                      },
-                                )
+                                updateElementStyles(selectedElement.id, { backgroundColor: e.target.value })
                               }
                               aria-label={`Background color, currently ${selectedElement.styles.backgroundColor}`}
                               className="h-8 w-10 cursor-pointer rounded border border-[#343434] bg-transparent"
@@ -715,14 +764,7 @@ function PlaygroundShell() {
                               type="color"
                               value={selectedElement.styles.color}
                               onChange={(e) =>
-                                setSelectedElement((prev) =>
-                                  prev == null
-                                    ? prev
-                                    : {
-                                        ...prev,
-                                        styles: { ...prev.styles, color: e.target.value },
-                                      },
-                                )
+                                updateElementStyles(selectedElement.id, { color: e.target.value })
                               }
                               aria-label={`Text color, currently ${selectedElement.styles.color}`}
                               className="h-8 w-10 cursor-pointer rounded border border-[#343434] bg-transparent"
@@ -737,19 +779,11 @@ function PlaygroundShell() {
                                 min={0}
                                 value={selectedElement.styles.borderRadiusPx}
                                 onChange={(e) =>
-                                  setSelectedElement((prev) =>
-                                    prev == null
-                                      ? prev
-                                      : {
-                                          ...prev,
-                                          styles: {
-                                            ...prev.styles,
-                                            borderRadiusPx: Number.isFinite(e.target.valueAsNumber)
-                                              ? e.target.valueAsNumber
-                                              : prev.styles.borderRadiusPx,
-                                          },
-                                        },
-                                  )
+                                  updateElementStyles(selectedElement.id, {
+                                    borderRadiusPx: Number.isFinite(e.target.valueAsNumber)
+                                      ? e.target.valueAsNumber
+                                      : selectedElement.styles.borderRadiusPx,
+                                  })
                                 }
                                 aria-label="Corner radius in pixels"
                                 className="w-20 rounded-md border border-[#343434] bg-[#252525] px-2 py-1 text-xs text-[#e0e0e0] focus:border-[#505050] focus:outline-none focus:ring-1 focus:ring-[#505050]"
@@ -840,9 +874,9 @@ function PlaygroundShell() {
             <SandpackPreview style={{ height: "100%" }} />
             <div
               className="absolute inset-0"
-              onMouseDown={(e) => {
+              onClick={(e) => {
                 if (e.target === e.currentTarget) {
-                  setSelectedElement(null);
+                  deselectElement();
                 }
               }}
             >
@@ -850,15 +884,12 @@ function PlaygroundShell() {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setSelectedElement({
-                    kind: "button",
-                    label: "Hello Sandpack",
-                    styles: { backgroundColor: "#111111", color: "#ffffff", borderRadiusPx: 10 },
-                  });
+                  if (selectedElementId === "button-1") return;
+                  selectElement("button-1");
                 }}
                 className={
                   "absolute left-6 top-6 h-[40px] w-[140px] rounded-[10px] bg-transparent outline-none hover:ring-2 hover:ring-[#0078d4]/60 focus-visible:ring-2 focus-visible:ring-[#0078d4]/80 " +
-                  (selectedElement?.kind === "button" ? "ring-2 ring-[#0078d4]" : "")
+                  (selectedElementId === "button-1" ? "ring-2 ring-[#0078d4]" : "")
                 }
                 aria-label="Select button"
               />
