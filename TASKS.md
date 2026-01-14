@@ -100,56 +100,76 @@
 
 ## Phase 2 — Describe & Inspect (Weeks 3–4)
 
-[ ] Define output formats contract in `packages/core` (`text|json|yaml|ndjson`) and a shared result envelope shape.
-[ ] Verify result envelopes: each CLI command returns `{ ok: true, ... }` (or `{ ok: false, error: ... }`) consistently.
+[x] Define output formats contract in `packages/core` (`text|json|yaml|ndjson`) and a shared result envelope shape.
+[x] Verify result envelopes: each CLI command returns `{ ok: true, ... }` (or `{ ok: false, error: ... }`) consistently.
 
-[ ] Implement CLI output renderer layer (text/json/yaml) used by all commands.
-[ ] Verify renderer: golden tests validate stable text and JSON outputs for one sample payload.
+[x] Implement CLI output renderer layer (text/json/yaml) used by all commands.
+[x] Verify renderer: golden tests validate stable text and JSON outputs for one sample payload.
 
-[ ] Implement `styles` capability: compute styles via `locator.evaluate(getComputedStyle)` returning selected props.
-[ ] Verify styles: `canvas styles "body" --props color,display --format json` returns those keys.
+[x] Implement `styles` capability: compute styles via `locator.evaluate(getComputedStyle)` returning selected props.
+[x] Verify styles: `canvas styles "body" --props color,display --format json` returns those keys.
 
-[ ] Implement `canvas styles <selector> --props ...` CLI command (defaults to a sensible property set).
-[ ] Verify defaults: `canvas styles "body"` returns a stable default set of props.
+[x] Implement `canvas styles <selector> --props ...` CLI command (defaults to a sensible property set).
+[x] Verify defaults: `canvas styles "body"` returns a stable default set of props.
 
-[ ] Implement DOM semantic snapshot capability (minimal): return accessibility snapshot + basic metadata (selector, url).
-[ ] Verify DOM snapshot: `canvas dom --format yaml` produces valid YAML and includes ARIA roles/names.
+[x] Implement DOM semantic snapshot capability (minimal): return accessibility snapshot + basic metadata (selector, url).
+[x] Verify DOM snapshot: `canvas dom --format yaml` produces valid YAML and includes ARIA roles/names.
 
-[ ] Implement `canvas dom [selector] --depth <n>` CLI command (initially depth is best-effort).
-[ ] Verify depth: `--depth 1` returns fewer nodes than `--depth 3` (or explicitly documents best-effort behavior).
+[x] Implement `canvas dom [selector] --depth <n>` CLI command (initially depth is best-effort).
+[x] Verify depth: `--depth 1` returns fewer nodes than `--depth 3` (or explicitly documents best-effort behavior).
 
-[ ] Add bounding box extraction in DOM snapshot (x/y/width/height per key node where possible).
-[ ] Verify bounding boxes: JSON output includes numeric box values for at least the root or selected node.
+[x] Add bounding box extraction in DOM snapshot (x/y/width/height per key node where possible).
+[x] Verify bounding boxes: JSON output includes numeric box values for at least the root or selected node.
 
-[ ] Implement visibility + disabled state extraction for described elements.
-[ ] Verify visibility/disabled: selecting a disabled button reports disabled=true; hidden elements report visible=false.
+[x] Implement visibility + disabled state extraction for described elements.
+[x] Verify visibility/disabled: selecting a disabled button reports disabled=true; hidden elements report visible=false.
 
-[ ] Implement heuristic “describe” engine (no LLM): templates powered by role/name, box size, key styles.
-[ ] Verify describe stability: same page state yields identical text output (no randomness).
+[x] Implement heuristic "describe" engine (no LLM): templates powered by role/name, box size, key styles.
+[x] Verify describe stability: same page state yields identical text output (no randomness).
 
-[ ] Implement `canvas describe <selector>` returning natural language by default.
-[ ] Verify describe text: output includes role/name + size summary + at least one style cue.
+[x] Implement `canvas describe <selector>` returning natural language by default.
+[x] Verify describe text: output includes role/name + size summary + at least one style cue.
 
-[ ] Implement `canvas describe <selector> --format json` returning structured data.
-[ ] Verify describe JSON: includes selector, role/name, box, and a small list of summarized children.
+[x] Implement `canvas describe <selector> --format json` returning structured data.
+[x] Verify describe JSON: includes selector, role/name, box, and a small list of summarized children.
 
-[ ] Implement YAML output for `dom`/`describe` using ARIA-style snapshot format where applicable.
-[ ] Verify YAML output: YAML parses and resembles ARIA snapshot structure (roles, names, levels).
+[x] Implement YAML output for `dom`/`describe` using ARIA-style snapshot format where applicable.
+[x] Verify YAML output: YAML parses and resembles ARIA snapshot structure (roles, names, levels).
 
-[ ] Add selector hinting: when selector fails, include small “nearby candidates” list in error `suggestion`.
-[ ] Verify selector hinting: a known-bad selector returns suggestion text and is marked retryable.
+[x] Add selector hinting: when selector fails, include small "nearby candidates" list in error `suggestion`.
+[x] Verify selector hinting: a known-bad selector returns suggestion text and is marked retryable.
 
-[ ] Add deterministic text formatting rules (line breaks, indentation, stable ordering) for agent friendliness.
-[ ] Verify formatting: add snapshot tests so formatting changes are intentional.
+[x] Add deterministic text formatting rules (line breaks, indentation, stable ordering) for agent friendliness.
+[x] Verify formatting: add snapshot tests so formatting changes are intentional.
 
-[ ] Add `--inline` option for `canvas screenshot --format json` to include base64-encoded PNG bytes (for agents that can’t read local files).
-[ ] Verify `--inline`: output JSON includes `base64` field and decoding it yields a valid PNG.
+[x] Add `--inline` option for `canvas screenshot --format json` to include base64-encoded PNG bytes (for agents that can't read local files).
+[x] Verify `--inline`: output JSON includes `base64` field and decoding it yields a valid PNG.
 
-[ ] Implement `context` capability in daemon: bundle `{ screenshot, describe, dom, styles }` for a selector (selector optional = page root).
-[ ] Verify `context`: `canvas context ".hero" --format json` returns all sub-payloads and is stable/deterministic.
+[x] Implement `context` capability in daemon: bundle `{ screenshot, describe, dom, styles }` for a selector (selector optional = page root).
+[x] Verify `context`: `canvas context ".hero" --format json` returns all sub-payloads and is stable/deterministic.
 
-[ ] Implement `canvas context [selector]` CLI command (uses output renderer; supports `--inline` for nested screenshot if requested).
-[ ] Verify `canvas context`: JSON output is a single object and includes `screenshot.path` (and `screenshot.base64` when inline).
+[x] Implement `canvas context [selector]` CLI command (uses output renderer; supports `--inline` for nested screenshot if requested).
+[x] Verify `canvas context`: JSON output is a single object and includes `screenshot.path` (and `screenshot.base64` when inline).
+
+### Execute Command (Arbitrary Playwright Code)
+
+[x] Implement `execute` capability in daemon core: accept code string, eval with `page`/`context`/`browser` in scope.
+[x] Verify execute: `canvas execute "await page.title()"` returns page title in result field.
+
+[x] Add sandboxing/safety guardrails: timeout (default 30s), catch and wrap errors with structured error response.
+[x] Verify timeout: `canvas execute "await new Promise(r => setTimeout(r, 60000))"` returns a 2xxx timeout error.
+
+[x] Implement `canvas execute "<code>"` CLI command (inline code argument).
+[x] Verify CLI: `canvas execute "await page.click('button')" --format json` returns structured success/error response.
+
+[x] Implement `canvas execute --file <path>` CLI option (read and execute script from file).
+[x] Verify file execution: `canvas execute --file ./test-script.ts` reads file content and executes it.
+
+[x] Add result serialization: serialize return value to JSON (handle non-serializable values gracefully).
+[x] Verify result: `canvas execute "return { count: 5 }"` returns `{ success: true, result: { count: 5 } }`.
+
+[x] Document exposed objects in help/README: `page`, `context`, `browser` and their Playwright types.
+[x] Verify help: `canvas execute --help` describes available objects and shows examples.
 
 ---
 

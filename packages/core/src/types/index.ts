@@ -39,6 +39,7 @@ export interface ScreenshotResult {
   width: number;
   height: number;
   timestamp: string;
+  base64?: string;
 }
 
 export interface DiffResult {
@@ -58,6 +59,25 @@ export interface ExecuteParams {
 
 export interface ExecuteResult {
   value: unknown;
+}
+
+export interface StylesParams {
+  selector: string;
+  props?: string[];
+}
+
+export interface DomParams {
+  selector?: string;
+  depth?: number;
+}
+
+export interface DescribeParams {
+  selector: string;
+}
+
+export interface ContextParams {
+  selector?: string;
+  depth?: number;
 }
 
 export type WatchEventType = 'file_changed' | 'hmr_start' | 'hmr_complete' | 'ui_ready';

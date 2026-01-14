@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "smoke": "./scripts/smoke-test.sh",
-    "test": "./scripts/smoke-test.sh"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
@@ -19,7 +20,8 @@
     "eslint": "^9.39.2",
     "prettier": "^3.7.4",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.52.0"
+    "typescript-eslint": "^8.52.0",
+    "vitest": "^4.0.17"
   },
   "engines": {
     "node": ">=20.0.0",

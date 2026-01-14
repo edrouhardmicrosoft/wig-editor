@@ -27,6 +27,7 @@ export type MethodName =
   | 'describe'
   | 'dom'
   | 'styles'
+  | 'context'
   | 'a11y'
   | 'diff'
   | 'watch.subscribe'

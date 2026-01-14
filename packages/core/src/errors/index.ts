@@ -86,13 +86,22 @@ export function createSelectorError(
   code: ErrorCode,
   message: string,
   selector: string,
-  options: { suggestion?: string } = {}
+  options: { suggestion?: string; candidates?: string[] } = {}
 ): CanvasError {
+  let suggestion = options.suggestion;
+  if (!suggestion) {
+    if (options.candidates && options.candidates.length > 0) {
+      const candidateList = options.candidates.slice(0, 5).join(', ');
+      suggestion = `Selector '${selector}' not found. Try: ${candidateList}`;
+    } else {
+      suggestion = `Selector '${selector}' not found. Check the selector syntax or use 'canvas dom' to inspect the page structure.`;
+    }
+  }
   return createError(code, message, {
     category: 'selector',
     retryable: true,
     param: 'selector',
-    suggestion: options.suggestion ?? `Selector '${selector}' failed.`,
+    suggestion,
   });
 }
 

@@ -8,12 +8,19 @@ import {
   type DaemonInfo,
   type SessionInfo,
   type ScreenshotResult,
+  type OutputFormat,
+  type StylesResult,
+  type DomResult,
+  type DescribeResult,
+  type ContextResult,
+  DEFAULT_STYLE_PROPS,
 } from '@wig/canvas-core';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { withClient } from './client/index.js';
+import { render, renderError } from './output/index.js';
 
 const VERSION = '0.0.0';
 
@@ -229,32 +236,23 @@ daemonCmd
 daemonCmd
   .command('ping')
   .description('Ping the daemon to verify connectivity')
-  .option('--format <format>', 'Output format (text|json)', 'text')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
   .action(async (options: { format: string }) => {
+    const format = options.format as OutputFormat;
     try {
       const response = await withClient(async (client) => {
         return client.send<{ pong: boolean }>('ping', {});
       });
-
-      if (isSuccessResponse(response)) {
-        if (options.format === 'json') {
-          console.log(JSON.stringify(response.result, null, 2));
-        } else {
-          console.log('pong');
-        }
-        process.exit(0);
-      } else {
-        console.error(`Error: ${response.error.message}`);
-        process.exit(1);
-      }
+      render(response, format, () => {
+        console.log('pong');
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
-        console.error('Daemon is not running. Start it with: canvas daemon start');
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
-        console.error(`Failed to connect: ${message}`);
+        renderError(`Failed to connect: ${message}`, format);
       }
-      process.exit(1);
     }
   });
 
@@ -262,115 +260,87 @@ program
   .command('connect')
   .description('Connect to a URL and open a browser session')
   .argument('<url>', 'URL to connect to')
-  .option('--format <format>', 'Output format (text|json)', 'text')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
   .action(async (url: string, options: { format: string }) => {
+    const format = options.format as OutputFormat;
     try {
       const response = await withClient(async (client) => {
         return client.send<SessionInfo>('connect', { url });
       });
-
-      if (isSuccessResponse(response)) {
-        if (options.format === 'json') {
-          console.log(JSON.stringify(response.result, null, 2));
-        } else {
-          console.log(`Connected to: ${response.result.url ?? url}`);
-          console.log(`  Browser:  ${response.result.browser ?? 'unknown'}`);
-          if (response.result.viewport) {
-            console.log(
-              `  Viewport: ${String(response.result.viewport.width)}x${String(response.result.viewport.height)}`
-            );
-          }
+      render(response, format, (result) => {
+        console.log(`Connected to: ${result.url ?? url}`);
+        console.log(`  Browser:  ${result.browser ?? 'unknown'}`);
+        if (result.viewport) {
+          console.log(
+            `  Viewport: ${String(result.viewport.width)}x${String(result.viewport.height)}`
+          );
         }
-      } else {
-        console.error(`Error: ${response.error.message}`);
-        if (response.error.data.suggestion) {
-          console.error(`Suggestion: ${response.error.data.suggestion}`);
-        }
-        process.exit(1);
-      }
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
-        console.error('Daemon is not running. Start it with: canvas daemon start');
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
-        console.error(`Failed to connect: ${message}`);
+        renderError(`Failed to connect: ${message}`, format);
       }
-      process.exit(1);
     }
   });
 
 program
   .command('disconnect')
   .description('Disconnect from the current browser session')
-  .option('--format <format>', 'Output format (text|json)', 'text')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
   .action(async (options: { format: string }) => {
+    const format = options.format as OutputFormat;
     try {
       const response = await withClient(async (client) => {
         return client.send<{ disconnected: boolean }>('disconnect', {});
       });
-
-      if (isSuccessResponse(response)) {
-        if (options.format === 'json') {
-          console.log(JSON.stringify(response.result, null, 2));
-        } else {
-          console.log('Disconnected');
-        }
-      } else {
-        console.error(`Error: ${response.error.message}`);
-        process.exit(1);
-      }
+      render(response, format, () => {
+        console.log('Disconnected');
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
-        console.error('Daemon is not running. Start it with: canvas daemon start');
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
-        console.error(`Failed to disconnect: ${message}`);
+        renderError(`Failed to disconnect: ${message}`, format);
       }
-      process.exit(1);
     }
   });
 
 program
   .command('status')
   .description('Show current session status')
-  .option('--format <format>', 'Output format (text|json)', 'text')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
   .action(async (options: { format: string }) => {
+    const format = options.format as OutputFormat;
     try {
       const response = await withClient(async (client) => {
         return client.send<SessionInfo>('status', {});
       });
-
-      if (isSuccessResponse(response)) {
-        if (options.format === 'json') {
-          console.log(JSON.stringify(response.result, null, 2));
-        } else {
-          const session = response.result;
-          console.log('Session Status');
-          console.log(`  Connected: ${session.connected ? 'yes' : 'no'}`);
-          if (session.url) {
-            console.log(`  URL:       ${session.url}`);
-          }
-          if (session.browser) {
-            console.log(`  Browser:   ${session.browser}`);
-          }
-          if (session.viewport) {
-            console.log(
-              `  Viewport:  ${String(session.viewport.width)}x${String(session.viewport.height)}`
-            );
-          }
+      render(response, format, (session) => {
+        console.log('Session Status');
+        console.log(`  Connected: ${session.connected ? 'yes' : 'no'}`);
+        if (session.url) {
+          console.log(`  URL:       ${session.url}`);
         }
-      } else {
-        console.error(`Error: ${response.error.message}`);
-        process.exit(1);
-      }
+        if (session.browser) {
+          console.log(`  Browser:   ${session.browser}`);
+        }
+        if (session.viewport) {
+          console.log(
+            `  Viewport:  ${String(session.viewport.width)}x${String(session.viewport.height)}`
+          );
+        }
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
-        console.error('Daemon is not running. Start it with: canvas daemon start');
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
-        console.error(`Failed to get status: ${message}`);
+        renderError(`Failed to get status: ${message}`, format);
       }
-      process.exit(1);
     }
   });
 
@@ -381,45 +351,34 @@ program
   )
   .argument('<code>', 'JavaScript source code to run')
   .option('--timeout-ms <ms>', 'Execution timeout in milliseconds', '5000')
-  .option('--format <format>', 'Output format (text|json)', 'text')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
   .action(async (code: string, options: { timeoutMs: string; format: string }) => {
     const timeoutMs = Number(options.timeoutMs);
+    const format = options.format as OutputFormat;
 
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      console.error('Invalid --timeout-ms. Must be a positive number.');
-      process.exit(1);
+      renderError('Invalid --timeout-ms. Must be a positive number.', format);
+      return;
     }
 
     try {
       const response = await withClient(async (client) => {
         return client.send<{ value: unknown }>('execute', { code, timeoutMs });
       });
-
-      if (isSuccessResponse(response)) {
-        if (options.format === 'json') {
-          console.log(JSON.stringify(response.result, null, 2));
+      render(response, format, (result) => {
+        if (typeof result.value === 'string') {
+          console.log(result.value);
         } else {
-          if (typeof response.result.value === 'string') {
-            console.log(response.result.value);
-          } else {
-            console.log(JSON.stringify(response.result.value, null, 2));
-          }
+          console.log(JSON.stringify(result.value, null, 2));
         }
-      } else {
-        console.error(`Error: ${response.error.message}`);
-        if (response.error.data.suggestion) {
-          console.error(`Suggestion: ${response.error.data.suggestion}`);
-        }
-        process.exit(1);
-      }
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
-        console.error('Daemon is not running. Start it with: canvas daemon start');
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
-        console.error(`Failed to execute: ${message}`);
+        renderError(`Failed to execute: ${message}`, format);
       }
-      process.exit(1);
     }
   });
 
@@ -428,38 +387,205 @@ program
   .description('Take a screenshot of the viewport or an element')
   .argument('[selector]', 'CSS selector for element screenshot (viewport if omitted)')
   .option('--out <path>', 'Output path for the screenshot')
-  .option('--format <format>', 'Output format (text|json)', 'text')
-  .action(async (selector: string | undefined, options: { out?: string; format: string }) => {
-    try {
-      const method = selector ? 'screenshot.element' : 'screenshot.viewport';
-      const params = selector ? { selector, out: options.out } : { out: options.out };
+  .option('--inline', 'Include base64-encoded PNG in JSON output')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(
+    async (
+      selector: string | undefined,
+      options: { out?: string; inline?: boolean; format: string }
+    ) => {
+      const format = options.format as OutputFormat;
+      try {
+        const method = selector ? 'screenshot.element' : 'screenshot.viewport';
+        const params = selector
+          ? { selector, out: options.out, inline: options.inline }
+          : { out: options.out, inline: options.inline };
 
-      const response = await withClient(async (client) => {
-        return client.send<ScreenshotResult>(method, params);
-      });
-
-      if (isSuccessResponse(response)) {
-        if (options.format === 'json') {
-          console.log(JSON.stringify(response.result, null, 2));
+        const response = await withClient(async (client) => {
+          return client.send<ScreenshotResult>(method, params);
+        });
+        render(response, format, (result) => {
+          console.log(`Screenshot saved to: ${result.path}`);
+          console.log(`  Size: ${String(result.width)}x${String(result.height)}`);
+          if (result.base64) {
+            console.log(
+              `  Base64: ${result.base64.slice(0, 50)}... (${result.base64.length} chars)`
+            );
+          }
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+          renderError('Daemon is not running. Start it with: canvas daemon start', format);
         } else {
-          console.log(`Screenshot saved to: ${response.result.path}`);
-          console.log(`  Size: ${String(response.result.width)}x${String(response.result.height)}`);
+          renderError(`Failed to take screenshot: ${message}`, format);
         }
-      } else {
-        console.error(`Error: ${response.error.message}`);
-        if (response.error.data.suggestion) {
-          console.error(`Suggestion: ${response.error.data.suggestion}`);
-        }
-        process.exit(1);
       }
+    }
+  );
+
+program
+  .command('styles')
+  .description('Get computed styles for an element')
+  .argument('<selector>', 'CSS selector for the element')
+  .option('--props <props>', 'Comma-separated list of CSS properties to retrieve')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (selector: string, options: { props?: string; format: string }) => {
+    const format = options.format as OutputFormat;
+    const props = options.props?.split(',').map((p) => p.trim());
+
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<StylesResult>('styles', { selector, props });
+      });
+      render(response, format, (result) => {
+        console.log(`Styles for: ${result.selector}`);
+        console.log(`URL: ${result.url}`);
+        console.log('');
+        const propNames = props ?? [...DEFAULT_STYLE_PROPS];
+        for (const prop of propNames) {
+          const value = result.props[prop];
+          if (value !== undefined) {
+            console.log(`  ${prop}: ${value}`);
+          }
+        }
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
-        console.error('Daemon is not running. Start it with: canvas daemon start');
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
-        console.error(`Failed to take screenshot: ${message}`);
+        renderError(`Failed to get styles: ${message}`, format);
       }
-      process.exit(1);
+    }
+  });
+
+program
+  .command('dom')
+  .description('Get DOM accessibility snapshot')
+  .argument('[selector]', 'CSS selector to scope the snapshot (defaults to body)')
+  .option('--depth <depth>', 'Maximum depth of the tree', '5')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (selector: string | undefined, options: { depth: string; format: string }) => {
+    const format = options.format as OutputFormat;
+    const depth = parseInt(options.depth, 10);
+
+    if (!Number.isFinite(depth) || depth < 1) {
+      renderError('Invalid --depth. Must be a positive integer.', format);
+      return;
+    }
+
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<DomResult>('dom', { selector, depth });
+      });
+      render(response, format, (result) => {
+        if (format === 'text') {
+          console.log(result.yaml);
+        } else {
+          console.log(`DOM snapshot for: ${result.selector ?? 'body'}`);
+          console.log(`URL: ${result.url}`);
+          console.log(`Depth: ${String(result.depth)}`);
+          console.log('');
+          console.log(result.yaml);
+        }
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to get DOM: ${message}`, format);
+      }
+    }
+  });
+
+program
+  .command('describe')
+  .description('Get a natural language description of an element')
+  .argument('<selector>', 'CSS selector for the element')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (selector: string, options: { format: string }) => {
+    const format = options.format as OutputFormat;
+
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<DescribeResult>('describe', { selector });
+      });
+      render(response, format, (result) => {
+        if (format === 'text') {
+          console.log(result.summary);
+        } else {
+          console.log(`Description for: ${result.selector}`);
+          console.log(`URL: ${result.url}`);
+          console.log('');
+          console.log(result.summary);
+        }
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to describe: ${message}`, format);
+      }
+    }
+  });
+
+program
+  .command('context')
+  .description('Get full inspection context for an element (screenshot, describe, dom, styles)')
+  .argument('[selector]', 'CSS selector for the element (defaults to body)')
+  .option('--depth <depth>', 'Maximum depth for DOM tree', '5')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (selector: string | undefined, options: { depth: string; format: string }) => {
+    const format = options.format as OutputFormat;
+    const depth = parseInt(options.depth, 10);
+
+    if (!Number.isFinite(depth) || depth < 1) {
+      renderError('Invalid --depth. Must be a positive integer.', format);
+      return;
+    }
+
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<ContextResult>('context', { selector, depth });
+      });
+      render(response, format, (result) => {
+        if (format === 'text') {
+          console.log('Context for:', result.selector ?? 'body');
+          console.log('URL:', result.url);
+          console.log('');
+          console.log('=== Screenshot ===');
+          console.log(`Path: ${result.screenshot.path}`);
+          console.log(
+            `Size: ${String(result.screenshot.width)}x${String(result.screenshot.height)}`
+          );
+          console.log('');
+          console.log('=== Description ===');
+          console.log(result.describe.summary);
+          console.log('');
+          console.log('=== DOM ===');
+          console.log(result.dom.yaml);
+          console.log('');
+          console.log('=== Key Styles ===');
+          for (const [prop, value] of Object.entries(result.styles.props).slice(0, 6)) {
+            console.log(`  ${prop}: ${value}`);
+          }
+        } else {
+          console.log('Context for:', result.selector ?? 'body');
+          console.log('URL:', result.url);
+          console.log('Screenshot:', result.screenshot.path);
+          console.log('Description:', result.describe.summary);
+        }
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to get context: ${message}`, format);
+      }
     }
   });
 

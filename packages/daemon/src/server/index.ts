@@ -18,8 +18,14 @@ import {
   type DaemonInfo,
   type SessionInfo,
   type ScreenshotResult,
+  type StylesParams,
+  type StylesResult,
+  type DomParams,
+  type DomResult,
+  type DescribeParams,
+  type ContextParams,
 } from '@wig/canvas-core';
-import { BrowserManager } from '../browser/index.js';
+import { BrowserManager, type DescribeResult, type ContextResult } from '../browser/index.js';
 
 export interface DaemonState {
   running: boolean;
@@ -189,6 +195,18 @@ export class DaemonServer {
       case 'execute':
         return this.handleExecute(id, params as { code: string; timeoutMs?: number });
 
+      case 'styles':
+        return this.handleStyles(id, params as StylesParams);
+
+      case 'dom':
+        return this.handleDom(id, params as DomParams);
+
+      case 'describe':
+        return this.handleDescribe(id, params as DescribeParams);
+
+      case 'context':
+        return this.handleContext(id, request.meta.cwd, params as ContextParams);
+
       default:
         return {
           id,
@@ -354,7 +372,7 @@ export class DaemonServer {
   private async handleScreenshot(
     id: RequestId,
     cwd: string,
-    params: { selector?: string; out?: string }
+    params: { selector?: string; out?: string; inline?: boolean }
   ): Promise<Response> {
     if (!this.browserManager.isConnected()) {
       return {
@@ -373,18 +391,22 @@ export class DaemonServer {
         path: params.out,
         selector: params.selector,
         cwd,
+        inline: params.inline,
       });
       return this.successResponse(id, result satisfies ScreenshotResult);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('selector') || message.includes('locator')) {
+        const selector = params.selector ?? 'unknown';
+        const candidates = await this.browserManager.getSelectorCandidates(selector);
         return {
           id,
           ok: false,
           error: createSelectorError(
             ErrorCodes.SELECTOR_NOT_FOUND,
-            `Selector not found: ${params.selector ?? 'unknown'}`,
-            params.selector ?? 'unknown'
+            `Selector not found: ${selector}`,
+            selector,
+            { candidates }
           ),
         };
       }
@@ -408,6 +430,220 @@ export class DaemonServer {
       browser: this.browserManager.getEngine(),
       viewport: state.viewport,
     };
+  }
+
+  private async handleStyles(id: RequestId, params: StylesParams): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    if (!params.selector) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INPUT_MISSING,
+          message: 'Missing required parameter: selector',
+          data: { category: 'input', retryable: false, param: 'selector' },
+        },
+      };
+    }
+
+    try {
+      const result = await this.browserManager.getStyles({
+        selector: params.selector,
+        props: params.props,
+      });
+      return this.successResponse(id, result satisfies StylesResult);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('selector') || message.includes('locator')) {
+        const candidates = await this.browserManager.getSelectorCandidates(params.selector);
+        return {
+          id,
+          ok: false,
+          error: createSelectorError(
+            ErrorCodes.SELECTOR_NOT_FOUND,
+            `Selector not found: ${params.selector}`,
+            params.selector,
+            { candidates }
+          ),
+        };
+      }
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: `Styles failed: ${message}`,
+          data: { category: 'internal', retryable: false },
+        },
+      };
+    }
+  }
+
+  private async handleDom(id: RequestId, params: DomParams): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    try {
+      const result = await this.browserManager.getDom({
+        selector: params.selector,
+        depth: params.depth,
+      });
+      return this.successResponse(id, result satisfies DomResult);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('selector') || message.includes('locator')) {
+        const selector = params.selector ?? 'body';
+        const candidates = await this.browserManager.getSelectorCandidates(selector);
+        return {
+          id,
+          ok: false,
+          error: createSelectorError(
+            ErrorCodes.SELECTOR_NOT_FOUND,
+            `Selector not found: ${selector}`,
+            selector,
+            { candidates }
+          ),
+        };
+      }
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: `Dom failed: ${message}`,
+          data: { category: 'internal', retryable: false },
+        },
+      };
+    }
+  }
+
+  private async handleDescribe(id: RequestId, params: DescribeParams): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    if (!params.selector) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INPUT_MISSING,
+          message: 'Missing required parameter: selector',
+          data: { category: 'input', retryable: false, param: 'selector' },
+        },
+      };
+    }
+
+    try {
+      const result = await this.browserManager.getDescribe({
+        selector: params.selector,
+      });
+      return this.successResponse(id, result satisfies DescribeResult);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('selector') || message.includes('locator')) {
+        const candidates = await this.browserManager.getSelectorCandidates(params.selector);
+        return {
+          id,
+          ok: false,
+          error: createSelectorError(
+            ErrorCodes.SELECTOR_NOT_FOUND,
+            `Selector not found: ${params.selector}`,
+            params.selector,
+            { candidates }
+          ),
+        };
+      }
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: `Describe failed: ${message}`,
+          data: { category: 'internal', retryable: false },
+        },
+      };
+    }
+  }
+
+  private async handleContext(
+    id: RequestId,
+    cwd: string,
+    params: ContextParams
+  ): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    try {
+      const result = await this.browserManager.getContext({
+        selector: params.selector,
+        depth: params.depth,
+        cwd,
+      });
+      return this.successResponse(id, result satisfies ContextResult);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('selector') || message.includes('locator')) {
+        const selector = params.selector ?? 'body';
+        const candidates = await this.browserManager.getSelectorCandidates(selector);
+        return {
+          id,
+          ok: false,
+          error: createSelectorError(
+            ErrorCodes.SELECTOR_NOT_FOUND,
+            `Selector not found: ${selector}`,
+            selector,
+            { candidates }
+          ),
+        };
+      }
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: `Context failed: ${message}`,
+          data: { category: 'internal', retryable: false },
+        },
+      };
+    }
   }
 
   private getDaemonStatus(): DaemonInfo {
