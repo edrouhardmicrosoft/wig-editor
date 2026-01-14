@@ -50,6 +50,8 @@ export interface DiffResult {
   mismatchedRatio: number;
   regions: BoundingBox[];
   baselineInitialized?: boolean;
+  threshold?: number;
+  summary?: string;
 }
 
 export interface ExecuteParams {

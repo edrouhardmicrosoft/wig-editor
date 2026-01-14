@@ -14,9 +14,14 @@
   },
   "dependencies": {
     "@wig/canvas-core": "workspace:*",
-    "playwright": "^1.57.0"
+    "pixelmatch": "^7.1.0",
+    "playwright": "^1.57.0",
+    "pngjs": "^7.0.0"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "devDependencies": {
+    "@types/pngjs": "^6.0.5"
+  }
 }

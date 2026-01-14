@@ -6,9 +6,24 @@ import {
   type BrowserContext,
   type Page,
 } from 'playwright';
-import { mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { DEFAULT_STYLE_PROPS } from '@wig/canvas-core';
+import {
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  appendFileSync,
+} from 'node:fs';
+import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
+import { PNG } from 'pngjs';
+import pixelmatch from 'pixelmatch';
+import {
+  DEFAULT_STYLE_PROPS,
+  ErrorCodes,
+  createInputError,
+  type DiffResult,
+  type BoundingBox,
+} from '@wig/canvas-core';
 
 export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
 
@@ -27,6 +42,27 @@ export interface ScreenshotOptions {
   selector?: string;
   cwd: string;
   inline?: boolean;
+}
+
+export interface DiffOptions {
+  cwd: string;
+  selector?: string;
+  since?: string;
+  threshold?: number;
+}
+
+export interface DiffManifestRecord {
+  ts: string;
+  baselinePath: string;
+  currentPath: string;
+  diffPath: string;
+  mismatchedPixels: number;
+  mismatchedRatio: number;
+  regions: Array<{ x: number; y: number; width: number; height: number }>;
+  threshold: number;
+  baselineInitialized: boolean;
+  url?: string;
+  selector?: string;
 }
 
 export interface ScreenshotResult {
@@ -102,6 +138,7 @@ export interface ContextResult {
 
 const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 const SCREENSHOTS_DIR = '.canvas/screenshots';
+
 const DEFAULT_DOM_DEPTH = 5;
 
 const COMMON_SELECTORS = [
@@ -339,13 +376,10 @@ export class BrowserManager {
       mkdirSync(outputDir, { recursive: true });
     }
 
-    let buffer: Buffer;
-    if (options.selector) {
-      const locator = this.page.locator(options.selector);
-      buffer = await locator.screenshot({ path: outputPath });
-    } else {
-      buffer = await this.page.screenshot({ path: outputPath, fullPage: false });
-    }
+    const buffer = await this.captureScreenshotPng({
+      selector: options.selector,
+      outPath: outputPath,
+    });
 
     const viewportSize = this.page.viewportSize();
 
@@ -361,6 +395,357 @@ export class BrowserManager {
     }
 
     return result;
+  }
+
+  async takeDiff(options: DiffOptions): Promise<DiffResult> {
+    if (!this.page || this.page.isClosed()) {
+      throw new Error('No page connected. Use connect first.');
+    }
+
+    const threshold = options.threshold ?? 0.1;
+
+    const screenshotsDir = join(options.cwd, SCREENSHOTS_DIR);
+    if (!existsSync(screenshotsDir)) {
+      mkdirSync(screenshotsDir, { recursive: true });
+    }
+
+    const diffsDir = join(options.cwd, '.canvas/diffs');
+    if (!existsSync(diffsDir)) {
+      mkdirSync(diffsDir, { recursive: true });
+    }
+
+    const baselineMarkerPath = join(diffsDir, 'baseline.json');
+    const baselineDefaultPath = join(screenshotsDir, 'baseline.png');
+
+    const baselinePath = this.resolveBaselinePath({
+      cwd: options.cwd,
+      since: options.since,
+      baselineMarkerPath,
+      baselineDefaultPath,
+    });
+
+    const nowIso = new Date().toISOString();
+    const timestampSafe = nowIso.replace(/[:.]/g, '-');
+
+    const currentPath = join(screenshotsDir, `${timestampSafe}.png`);
+    await this.captureScreenshotPng({ selector: options.selector, outPath: currentPath });
+
+    if (!baselinePath) {
+      writeFileSync(
+        baselineMarkerPath,
+        JSON.stringify(
+          {
+            baselinePath: baselineDefaultPath,
+            updatedAt: nowIso,
+          },
+          null,
+          2
+        )
+      );
+
+      writeFileSync(baselineDefaultPath, readFileSync(currentPath));
+
+      const result: DiffResult = {
+        baselinePath: baselineDefaultPath,
+        currentPath,
+        diffPath: '',
+        mismatchedPixels: 0,
+        mismatchedRatio: 0,
+        regions: [],
+        baselineInitialized: true,
+        threshold,
+        summary: 'No baseline existed; baseline initialized.',
+      };
+
+      this.appendDiffManifest(diffsDir, {
+        ts: nowIso,
+        baselinePath: result.baselinePath,
+        currentPath: result.currentPath,
+        diffPath: result.diffPath,
+        mismatchedPixels: result.mismatchedPixels,
+        mismatchedRatio: result.mismatchedRatio,
+        regions: result.regions,
+        threshold,
+        baselineInitialized: true,
+        url: this.page.url(),
+        selector: options.selector,
+      });
+
+      return result;
+    }
+
+    const diffPath = join(diffsDir, `${timestampSafe}.diff.png`);
+
+    const { mismatchedPixels, mismatchedRatio, regions } = this.computeDiff({
+      baselinePath,
+      currentPath,
+      diffPath,
+      threshold,
+    });
+
+    writeFileSync(
+      baselineMarkerPath,
+      JSON.stringify(
+        {
+          baselinePath: baselineDefaultPath,
+          updatedAt: nowIso,
+        },
+        null,
+        2
+      )
+    );
+    writeFileSync(baselineDefaultPath, readFileSync(currentPath));
+
+    const summary = this.summarizeRegions(regions);
+
+    const result: DiffResult = {
+      baselinePath,
+      currentPath,
+      diffPath,
+      mismatchedPixels,
+      mismatchedRatio,
+      regions,
+      baselineInitialized: false,
+      threshold,
+      summary,
+    };
+
+    this.appendDiffManifest(diffsDir, {
+      ts: nowIso,
+      baselinePath: result.baselinePath,
+      currentPath: result.currentPath,
+      diffPath: result.diffPath,
+      mismatchedPixels: result.mismatchedPixels,
+      mismatchedRatio: result.mismatchedRatio,
+      regions: result.regions,
+      threshold,
+      baselineInitialized: false,
+      url: this.page.url(),
+      selector: options.selector,
+    });
+
+    return result;
+  }
+
+  private async captureScreenshotPng(options: {
+    selector?: string;
+    outPath: string;
+  }): Promise<Buffer> {
+    if (!this.page || this.page.isClosed()) {
+      throw new Error('No page connected. Use connect first.');
+    }
+
+    if (options.selector) {
+      const locator = this.page.locator(options.selector);
+      return locator.screenshot({ path: options.outPath });
+    }
+
+    return this.page.screenshot({ path: options.outPath, fullPage: false });
+  }
+
+  private computeDiff(options: {
+    baselinePath: string;
+    currentPath: string;
+    diffPath: string;
+    threshold: number;
+  }): { mismatchedPixels: number; mismatchedRatio: number; regions: BoundingBox[] } {
+    const baseline = PNG.sync.read(readFileSync(options.baselinePath));
+    const current = PNG.sync.read(readFileSync(options.currentPath));
+
+    if (baseline.width !== current.width || baseline.height !== current.height) {
+      throw new Error(
+        `Image dimensions must match. Baseline: ${baseline.width}x${baseline.height}, current: ${current.width}x${current.height}`
+      );
+    }
+
+    const diff = new PNG({ width: baseline.width, height: baseline.height });
+
+    const mismatchedPixels = pixelmatch(
+      baseline.data,
+      current.data,
+      diff.data,
+      baseline.width,
+      baseline.height,
+      { threshold: options.threshold }
+    );
+
+    const mismatchedRatio = mismatchedPixels / (baseline.width * baseline.height);
+
+    writeFileSync(options.diffPath, PNG.sync.write(diff));
+
+    const regions = this.computeRegionsFromDiffMask(diff, mismatchedPixels);
+
+    return { mismatchedPixels, mismatchedRatio, regions };
+  }
+
+  private computeRegionsFromDiffMask(diff: PNG, mismatchedPixels: number): BoundingBox[] {
+    if (mismatchedPixels === 0) {
+      return [];
+    }
+
+    const { width, height, data } = diff;
+
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 4;
+        const a = data[idx + 3];
+        if ((a ?? 0) > 0) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    if (maxX < 0 || maxY < 0) {
+      return [];
+    }
+
+    return [
+      {
+        x: minX,
+        y: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1,
+      },
+    ];
+  }
+
+  private summarizeRegions(regions: BoundingBox[]): string {
+    if (regions.length === 0) {
+      return 'No visual changes detected.';
+    }
+
+    let largest = regions[0];
+    if (!largest) {
+      return 'No visual changes detected.';
+    }
+
+    for (const r of regions) {
+      if (r.width * r.height > largest.width * largest.height) {
+        largest = r;
+      }
+    }
+
+    const quadrantX = largest.x + largest.width / 2;
+    const quadrantY = largest.y + largest.height / 2;
+
+    const horiz = quadrantX < DEFAULT_VIEWPORT.width / 2 ? 'left' : 'right';
+    const vert = quadrantY < DEFAULT_VIEWPORT.height / 2 ? 'top' : 'bottom';
+
+    return `${String(regions.length)} region(s) changed; largest change near ${vert}-${horiz}.`;
+  }
+
+  private resolveBaselinePath(options: {
+    cwd: string;
+    since?: string;
+    baselineMarkerPath: string;
+    baselineDefaultPath: string;
+  }): string | null {
+    if (options.since && options.since !== 'last') {
+      const ts = Date.parse(options.since);
+      if (!Number.isFinite(ts)) {
+        throw createInputError(
+          ErrorCodes.INPUT_TIMESTAMP_INVALID,
+          `Invalid --since timestamp: ${options.since}`,
+          'since',
+          { suggestion: 'Use ISO 8601 format (e.g. 2026-01-14T10:00:00Z) or "last".' }
+        );
+      }
+
+      const chosen = this.pickScreenshotAtOrBefore(options.cwd, ts);
+      return chosen;
+    }
+
+    if (existsSync(options.baselineMarkerPath)) {
+      try {
+        const marker = JSON.parse(readFileSync(options.baselineMarkerPath, 'utf-8')) as {
+          baselinePath?: string;
+        };
+        if (marker.baselinePath) {
+          const abs = this.toAbsolutePath(options.cwd, marker.baselinePath);
+          if (existsSync(abs)) return abs;
+        }
+      } catch {}
+    }
+
+    const last = this.pickMostRecentScreenshot(options.cwd);
+    return last;
+  }
+
+  private pickMostRecentScreenshot(cwd: string): string | null {
+    const dir = join(cwd, SCREENSHOTS_DIR);
+    if (!existsSync(dir)) return null;
+
+    const entries = readdirSync(dir)
+      .filter((n) => n.endsWith('.png'))
+      .map((name) => ({ name, full: join(dir, name) }))
+      .filter((e) => e.name !== 'baseline.png');
+
+    if (entries.length === 0) return null;
+
+    entries.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+    return entries[0]?.full ?? null;
+  }
+
+  private pickScreenshotAtOrBefore(cwd: string, targetMs: number): string | null {
+    const dir = join(cwd, SCREENSHOTS_DIR);
+    if (!existsSync(dir)) return null;
+
+    const candidates: Array<{ name: string; full: string; ts: number }> = [];
+
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.png') || name === 'baseline.png') continue;
+      const raw = name.replace(/\.png$/, '').replace(/-/g, ':');
+      const parsed = Date.parse(raw);
+      if (!Number.isFinite(parsed)) continue;
+      if (parsed <= targetMs) {
+        candidates.push({ name, full: join(dir, name), ts: parsed });
+      }
+    }
+
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => b.ts - a.ts);
+    return candidates[0]?.full ?? null;
+  }
+
+  private toAbsolutePath(cwd: string, maybePath: string): string {
+    if (isAbsolute(maybePath)) return maybePath;
+    return resolve(cwd, maybePath);
+  }
+
+  private appendDiffManifest(
+    diffsDir: string,
+    record: {
+      ts: string;
+      baselinePath: string;
+      currentPath: string;
+      diffPath: string;
+      mismatchedPixels: number;
+      mismatchedRatio: number;
+      regions: BoundingBox[];
+      threshold: number;
+      baselineInitialized: boolean;
+      url?: string;
+      selector?: string;
+    }
+  ): void {
+    const manifestPath = join(diffsDir, 'manifest.jsonl');
+    const payload = {
+      ...record,
+      baselinePath: relative(diffsDir, record.baselinePath),
+      currentPath: relative(diffsDir, record.currentPath),
+      diffPath: record.diffPath ? relative(diffsDir, record.diffPath) : '',
+    };
+
+    appendFileSync(manifestPath, JSON.stringify(payload) + '\n');
   }
 
   async getStyles(options: StylesOptions): Promise<StylesResult> {

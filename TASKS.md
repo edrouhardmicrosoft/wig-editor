@@ -175,38 +175,38 @@
 
 ## Phase 3 — Visual Diff (Weeks 5–6)
 
-[ ] Create `.canvas/diffs/` directory management and a metadata record format for diff runs.
-[ ] Verify diff artifacts: running `canvas diff` creates a diff PNG in `.canvas/diffs/`.
+[x] Create `.canvas/diffs/` directory management and a metadata record format for diff runs.
+[x] Verify diff artifacts: running `canvas diff` creates a diff PNG in `.canvas/diffs/`.
 
-[ ] Implement screenshot “baseline” pointer logic (what “last” means) using timestamps and/or manifest.
-[ ] Verify baseline: `canvas diff --since last` picks the most recent baseline deterministically.
+[x] Implement screenshot “baseline” pointer logic (what “last” means) using timestamps and/or manifest.
+[x] Verify baseline: `canvas diff --since last` picks the most recent baseline deterministically.
 
-[ ] Define and implement behavior when no baseline exists (initialize baseline on first diff; not an error).
-[ ] Verify baseline init: on an empty `.canvas/`, `canvas diff --since last` returns `baselineInitialized: true` and `mismatchedRatio: 0`.
+[x] Define and implement behavior when no baseline exists (initialize baseline on first diff; not an error).
+[x] Verify baseline init: on an empty `.canvas/`, `canvas diff --since last` returns `baselineInitialized: true` and `mismatchedRatio: 0`.
 
-[ ] Add `pixelmatch` + `pngjs` dependencies and implement image decode/encode helpers.
-[ ] Verify image helpers: unit test decodes and re-encodes a PNG without throwing.
+[x] Add `pixelmatch` + `pngjs` dependencies and implement image decode/encode helpers.
+[x] Verify image helpers: unit test decodes and re-encodes a PNG without throwing.
 
-[ ] Implement diff computation (mismatched pixels, ratio) and diff image output path selection.
-[ ] Verify diff results: diff output includes mismatchedPixels and mismatchedRatio fields.
+[x] Implement diff computation (mismatched pixels, ratio) and diff image output path selection.
+[x] Verify diff results: diff output includes mismatchedPixels and mismatchedRatio fields.
 
-[ ] Implement coarse changed-region detection (simple bounding boxes from diff mask).
-[ ] Verify regions: when two known images differ, regions array is non-empty.
+[x] Implement coarse changed-region detection (simple bounding boxes from diff mask).
+[x] Verify regions: when two known images differ, regions array is non-empty.
 
-[ ] Implement `canvas diff --since last` returning: mismatched ratio, diff image path, changed regions.
-[ ] Verify `diff` json: output is parseable JSON, includes `diffPath`, `baselinePath`, `currentPath`.
+[x] Implement `canvas diff --since last` returning: mismatched ratio, diff image path, changed regions.
+[x] Verify `diff` json: output is parseable JSON, includes `diffPath`, `baselinePath`, `currentPath`.
 
-[ ] Implement natural language diff summary (e.g., “3 regions changed; largest change near top-right”).
-[ ] Verify diff text: output includes a count of regions and a short description.
+[x] Implement natural language diff summary (e.g., “3 regions changed; largest change near top-right”).
+[x] Verify diff text: output includes a count of regions and a short description.
 
-[ ] Implement `canvas diff --since <timestamp>` selecting the correct baseline screenshot.
-[ ] Verify timestamp resolution: invalid timestamps return a 5xxx error with a suggestion.
+[x] Implement `canvas diff --since <timestamp>` selecting the correct baseline screenshot.
+[x] Verify timestamp resolution: invalid timestamps return a 5xxx error with a suggestion.
 
-[ ] Implement “auto-update baseline” behavior after diff completes (write/update baseline marker).
-[ ] Verify baseline update: re-running `canvas diff --since last` after update yields zero changes (when UI unchanged).
+[x] Implement “auto-update baseline” behavior after diff completes (write/update baseline marker).
+[x] Verify baseline update: re-running `canvas diff --since last` after update yields zero changes (when UI unchanged).
 
-[ ] Add configurable threshold option for diff noise handling (`--threshold`).
-[ ] Verify threshold: higher threshold reduces mismatched pixels for the same image pair.
+[x] Add configurable threshold option for diff noise handling (`--threshold`).
+[x] Verify threshold: higher threshold reduces mismatched pixels for the same image pair.
 
 ---
 

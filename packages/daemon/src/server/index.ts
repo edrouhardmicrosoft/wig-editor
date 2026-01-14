@@ -207,6 +207,13 @@ export class DaemonServer {
       case 'context':
         return this.handleContext(id, request.meta.cwd, params as ContextParams);
 
+      case 'diff':
+        return this.handleDiff(
+          id,
+          request.meta.cwd,
+          params as { selector?: string; since?: string; threshold?: number }
+        );
+
       default:
         return {
           id,
@@ -640,6 +647,45 @@ export class DaemonServer {
         error: {
           code: ErrorCodes.INTERNAL_ERROR,
           message: `Context failed: ${message}`,
+          data: { category: 'internal', retryable: false },
+        },
+      };
+    }
+  }
+
+  private async handleDiff(
+    id: RequestId,
+    cwd: string,
+    params: { selector?: string; since?: string; threshold?: number }
+  ): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    try {
+      const result = await this.browserManager.takeDiff({
+        cwd,
+        selector: params.selector,
+        since: params.since,
+        threshold: params.threshold,
+      });
+      return this.successResponse(id, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: `Diff failed: ${message}`,
           data: { category: 'internal', retryable: false },
         },
       };

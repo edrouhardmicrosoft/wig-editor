@@ -8,6 +8,7 @@ import {
   type DaemonInfo,
   type SessionInfo,
   type ScreenshotResult,
+  type DiffResult,
   type OutputFormat,
   type StylesResult,
   type DomResult,
@@ -381,6 +382,57 @@ program
       }
     }
   });
+
+program
+  .command('diff')
+  .description('Compare the current screenshot against a baseline and output a visual diff')
+  .argument('[selector]', 'CSS selector for element diff (viewport if omitted)')
+  .option('--since <since>', 'Baseline selector: "last" or ISO timestamp')
+  .option('--threshold <threshold>', 'Diff threshold (0..1). Higher ignores more noise', '0.1')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(
+    async (
+      selector: string | undefined,
+      options: { since?: string; threshold: string; format: string }
+    ) => {
+      const format = options.format as OutputFormat;
+      const threshold = Number(options.threshold);
+
+      if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+        renderError('Invalid --threshold. Must be a number between 0 and 1.', format);
+        return;
+      }
+
+      try {
+        const response = await withClient(async (client) => {
+          return client.send<DiffResult>('diff', {
+            selector,
+            since: options.since,
+            threshold,
+          });
+        });
+
+        render(response, format, (result) => {
+          const ratioPct = (result.mismatchedRatio * 100).toFixed(2);
+          console.log(`Baseline: ${result.baselinePath}`);
+          console.log(`Current:  ${result.currentPath}`);
+          console.log(`Diff:     ${result.diffPath}`);
+          if (result.baselineInitialized) {
+            console.log('Baseline initialized (no prior baseline existed).');
+          }
+          console.log(`Mismatched: ${String(result.mismatchedPixels)} pixels (${ratioPct}%)`);
+          console.log(`Regions: ${String(result.regions.length)}`);
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+          renderError('Daemon is not running. Start it with: canvas daemon start', format);
+        } else {
+          renderError(`Failed to diff: ${message}`, format);
+        }
+      }
+    }
+  );
 
 program
   .command('screenshot')
