@@ -30,6 +30,7 @@
   },
   "packageManager": "pnpm@9.15.4",
   "dependencies": {
+    "@axe-core/playwright": "^4.10.2",
     "chokidar": "^5.0.0",
     "commander": "^14.0.2",
     "pixelmatch": "^7.1.0",

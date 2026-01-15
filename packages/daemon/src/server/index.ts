@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from 'node:net';
 import chokidar, { type FSWatcher } from 'chokidar';
-import { unlinkSync, existsSync, writeFileSync, chmodSync } from 'node:fs';
+import { unlinkSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import {
   type Request,
   type Response,
@@ -16,6 +16,7 @@ import {
   isCompatible,
   getSocketPath,
   getPidFilePath,
+  getTransportConfig,
   type DaemonInfo,
   type SessionInfo,
   type ScreenshotResult,
@@ -25,6 +26,9 @@ import {
   type DomResult,
   type DescribeParams,
   type ContextParams,
+  type A11yParams,
+  type DoctorResult,
+  type DoctorCheck,
 } from '@wig/canvas-core';
 import { BrowserManager, type DescribeResult, type ContextResult } from '../browser/index.js';
 
@@ -53,6 +57,7 @@ export class DaemonServer {
   private uiReadyTimer: NodeJS.Timeout | null = null;
   private uiReadyMaxTimer: NodeJS.Timeout | null = null;
   private uiReadyObserverInstalled = false;
+  private lastError: import('@wig/canvas-core').ErrorInfo | null = null;
 
   constructor() {
     this.socketPath = getSocketPath();
@@ -241,7 +246,15 @@ export class DaemonServer {
         return this.successResponse(id, { stopping: true });
 
       case 'connect':
-        return this.handleConnect(id, params as { url: string });
+        return this.handleConnect(
+          id,
+          params as {
+            url: string;
+            watchPaths?: string[];
+            browser?: 'chromium' | 'firefox' | 'webkit';
+            timeoutMs?: number;
+          }
+        );
 
       case 'disconnect':
         return this.handleDisconnect(id);
@@ -274,12 +287,18 @@ export class DaemonServer {
       case 'context':
         return this.handleContext(id, request.meta.cwd, params as ContextParams);
 
+      case 'a11y':
+        return this.handleA11y(id, params as A11yParams);
+
       case 'diff':
         return this.handleDiff(
           id,
           request.meta.cwd,
           params as { selector?: string; since?: string; threshold?: number }
         );
+
+      case 'doctor':
+        return this.handleDoctor(id);
 
       default:
         return {
@@ -296,7 +315,14 @@ export class DaemonServer {
 
   private async handleConnect(
     id: RequestId,
-    params: { url: string; watchPaths?: string[] }
+    params: {
+      url: string;
+      watchPaths?: string[];
+      browser?: 'chromium' | 'firefox' | 'webkit';
+      timeoutMs?: number;
+      retries?: number;
+      backoffMs?: number;
+    }
   ): Promise<Response> {
     if (!params.url) {
       return {
@@ -310,44 +336,92 @@ export class DaemonServer {
       };
     }
 
-    try {
-      const watchPaths = (params.watchPaths ?? []).filter(
-        (p) => typeof p === 'string' && p.length > 0
-      );
-      const sessionState = await this.browserManager.connect(params.url, {
-        watchPaths,
-      });
-      this.setWatchPaths(watchPaths);
-      return this.successResponse(id, {
-        connected: true,
-        url: sessionState.url ?? undefined,
-        browser: this.browserManager.getEngine(),
-        viewport: sessionState.viewport,
-        watchPaths: sessionState.watchPaths,
-      } satisfies SessionInfo);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('Timeout') || message.includes('timeout')) {
-        return {
-          id,
-          ok: false,
-          error: createTimeoutError(
-            ErrorCodes.NAVIGATION_TIMEOUT,
-            `Navigation timeout: ${params.url}`,
-            { suggestion: 'Check if the URL is accessible and try again' }
-          ),
-        };
-      }
+    if (
+      params.browser &&
+      params.browser !== 'chromium' &&
+      params.browser !== 'firefox' &&
+      params.browser !== 'webkit'
+    ) {
       return {
         id,
         ok: false,
         error: {
-          code: ErrorCodes.NAVIGATION_FAILED,
-          message: `Failed to connect: ${message}`,
-          data: { category: 'navigation', retryable: true },
+          code: ErrorCodes.INPUT_ENUM_INVALID,
+          message: 'Invalid --browser. Must be chromium, firefox, or webkit.',
+          data: { category: 'input', retryable: false, param: 'browser' },
         },
       };
     }
+
+    const watchPaths = (params.watchPaths ?? []).filter(
+      (p) => typeof p === 'string' && p.length > 0
+    );
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const sessionState = await this.browserManager.connect(params.url, {
+          watchPaths,
+          engine: params.browser,
+          timeoutMs: params.timeoutMs,
+        });
+        this.setWatchPaths(watchPaths);
+        return this.successResponse(id, {
+          connected: true,
+          url: sessionState.url ?? undefined,
+          browser: this.browserManager.getEngine(),
+          viewport: sessionState.viewport,
+          watchPaths: sessionState.watchPaths,
+        } satisfies SessionInfo);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying connect (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.NAVIGATION_TIMEOUT,
+              `Navigation timeout: ${params.url}`,
+              { suggestion: 'Check if the URL is accessible and try again' }
+            ),
+          };
+        }
+        const suggestion = message.includes('playwright install')
+          ? 'Run: npx playwright install'
+          : undefined;
+        return {
+          id,
+          ok: false,
+          error: {
+            code: ErrorCodes.NAVIGATION_FAILED,
+            message: `Failed to connect: ${message}`,
+            data: {
+              category: 'navigation',
+              retryable: true,
+              suggestion,
+            },
+          },
+        };
+      }
+    }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.NAVIGATION_FAILED,
+        message: 'Failed to connect after retries',
+        data: { category: 'navigation', retryable: true },
+      },
+    };
   }
 
   private async handleDisconnect(id: RequestId): Promise<Response> {
@@ -459,7 +533,14 @@ export class DaemonServer {
   private async handleScreenshot(
     id: RequestId,
     cwd: string,
-    params: { selector?: string; out?: string; inline?: boolean }
+    params: {
+      selector?: string;
+      out?: string;
+      inline?: boolean;
+      timeoutMs?: number;
+      retries?: number;
+      backoffMs?: number;
+    }
   ): Promise<Response> {
     if (!this.browserManager.isConnected()) {
       return {
@@ -473,40 +554,74 @@ export class DaemonServer {
       };
     }
 
-    try {
-      const result = await this.browserManager.takeScreenshot({
-        path: params.out,
-        selector: params.selector,
-        cwd,
-        inline: params.inline,
-      });
-      return this.successResponse(id, result satisfies ScreenshotResult);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('selector') || message.includes('locator')) {
-        const selector = params.selector ?? 'unknown';
-        const candidates = await this.browserManager.getSelectorCandidates(selector);
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await this.browserManager.takeScreenshot({
+          path: params.out,
+          selector: params.selector,
+          cwd,
+          inline: params.inline,
+          timeoutMs: params.timeoutMs,
+        });
+        return this.successResponse(id, result satisfies ScreenshotResult);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying screenshot (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.TIMEOUT_SELECTOR,
+              `Screenshot timed out for selector: ${params.selector ?? 'viewport'}`,
+              { suggestion: 'Increase --timeout or simplify the selector.' }
+            ),
+          };
+        }
+        if (message.includes('selector') || message.includes('locator')) {
+          const selector = params.selector ?? 'unknown';
+          const candidates = await this.browserManager.getSelectorCandidates(selector);
+          return {
+            id,
+            ok: false,
+            error: createSelectorError(
+              ErrorCodes.SELECTOR_NOT_FOUND,
+              `Selector not found: ${selector}`,
+              selector,
+              { candidates }
+            ),
+          };
+        }
         return {
           id,
           ok: false,
-          error: createSelectorError(
-            ErrorCodes.SELECTOR_NOT_FOUND,
-            `Selector not found: ${selector}`,
-            selector,
-            { candidates }
-          ),
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: `Screenshot failed: ${message}`,
+            data: { category: 'internal', retryable: false },
+          },
         };
       }
-      return {
-        id,
-        ok: false,
-        error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: `Screenshot failed: ${message}`,
-          data: { category: 'internal', retryable: false },
-        },
-      };
     }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Screenshot failed after retries',
+        data: { category: 'internal', retryable: false },
+      },
+    };
   }
 
   private getSessionStatus(): SessionInfo {
@@ -545,37 +660,71 @@ export class DaemonServer {
       };
     }
 
-    try {
-      const result = await this.browserManager.getStyles({
-        selector: params.selector,
-        props: params.props,
-      });
-      return this.successResponse(id, result satisfies StylesResult);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('selector') || message.includes('locator')) {
-        const candidates = await this.browserManager.getSelectorCandidates(params.selector);
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await this.browserManager.getStyles({
+          selector: params.selector,
+          props: params.props,
+          timeoutMs: params.timeoutMs,
+        });
+        return this.successResponse(id, result satisfies StylesResult);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying styles (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.TIMEOUT_SELECTOR,
+              `Styles timed out for selector: ${params.selector}`,
+              { suggestion: 'Increase --timeout or check the selector.' }
+            ),
+          };
+        }
+        if (message.includes('selector') || message.includes('locator')) {
+          const candidates = await this.browserManager.getSelectorCandidates(params.selector);
+          return {
+            id,
+            ok: false,
+            error: createSelectorError(
+              ErrorCodes.SELECTOR_NOT_FOUND,
+              `Selector not found: ${params.selector}`,
+              params.selector,
+              { candidates }
+            ),
+          };
+        }
         return {
           id,
           ok: false,
-          error: createSelectorError(
-            ErrorCodes.SELECTOR_NOT_FOUND,
-            `Selector not found: ${params.selector}`,
-            params.selector,
-            { candidates }
-          ),
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: `Styles failed: ${message}`,
+            data: { category: 'internal', retryable: false },
+          },
         };
       }
-      return {
-        id,
-        ok: false,
-        error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: `Styles failed: ${message}`,
-          data: { category: 'internal', retryable: false },
-        },
-      };
     }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Styles failed after retries',
+        data: { category: 'internal', retryable: false },
+      },
+    };
   }
 
   private async handleDom(id: RequestId, params: DomParams): Promise<Response> {
@@ -591,38 +740,72 @@ export class DaemonServer {
       };
     }
 
-    try {
-      const result = await this.browserManager.getDom({
-        selector: params.selector,
-        depth: params.depth,
-      });
-      return this.successResponse(id, result satisfies DomResult);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('selector') || message.includes('locator')) {
-        const selector = params.selector ?? 'body';
-        const candidates = await this.browserManager.getSelectorCandidates(selector);
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await this.browserManager.getDom({
+          selector: params.selector,
+          depth: params.depth,
+          timeoutMs: params.timeoutMs,
+        });
+        return this.successResponse(id, result satisfies DomResult);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying dom (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.TIMEOUT_SELECTOR,
+              `Dom snapshot timed out for selector: ${params.selector ?? 'body'}`,
+              { suggestion: 'Increase --timeout or reduce --depth.' }
+            ),
+          };
+        }
+        if (message.includes('selector') || message.includes('locator')) {
+          const selector = params.selector ?? 'body';
+          const candidates = await this.browserManager.getSelectorCandidates(selector);
+          return {
+            id,
+            ok: false,
+            error: createSelectorError(
+              ErrorCodes.SELECTOR_NOT_FOUND,
+              `Selector not found: ${selector}`,
+              selector,
+              { candidates }
+            ),
+          };
+        }
         return {
           id,
           ok: false,
-          error: createSelectorError(
-            ErrorCodes.SELECTOR_NOT_FOUND,
-            `Selector not found: ${selector}`,
-            selector,
-            { candidates }
-          ),
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: `Dom failed: ${message}`,
+            data: { category: 'internal', retryable: false },
+          },
         };
       }
-      return {
-        id,
-        ok: false,
-        error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: `Dom failed: ${message}`,
-          data: { category: 'internal', retryable: false },
-        },
-      };
     }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Dom failed after retries',
+        data: { category: 'internal', retryable: false },
+      },
+    };
   }
 
   private async handleDescribe(id: RequestId, params: DescribeParams): Promise<Response> {
@@ -650,36 +833,70 @@ export class DaemonServer {
       };
     }
 
-    try {
-      const result = await this.browserManager.getDescribe({
-        selector: params.selector,
-      });
-      return this.successResponse(id, result satisfies DescribeResult);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('selector') || message.includes('locator')) {
-        const candidates = await this.browserManager.getSelectorCandidates(params.selector);
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await this.browserManager.getDescribe({
+          selector: params.selector,
+          timeoutMs: params.timeoutMs,
+        });
+        return this.successResponse(id, result satisfies DescribeResult);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying describe (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.TIMEOUT_SELECTOR,
+              `Describe timed out for selector: ${params.selector}`,
+              { suggestion: 'Increase --timeout or check the selector.' }
+            ),
+          };
+        }
+        if (message.includes('selector') || message.includes('locator')) {
+          const candidates = await this.browserManager.getSelectorCandidates(params.selector);
+          return {
+            id,
+            ok: false,
+            error: createSelectorError(
+              ErrorCodes.SELECTOR_NOT_FOUND,
+              `Selector not found: ${params.selector}`,
+              params.selector,
+              { candidates }
+            ),
+          };
+        }
         return {
           id,
           ok: false,
-          error: createSelectorError(
-            ErrorCodes.SELECTOR_NOT_FOUND,
-            `Selector not found: ${params.selector}`,
-            params.selector,
-            { candidates }
-          ),
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: `Describe failed: ${message}`,
+            data: { category: 'internal', retryable: false },
+          },
         };
       }
-      return {
-        id,
-        ok: false,
-        error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: `Describe failed: ${message}`,
-          data: { category: 'internal', retryable: false },
-        },
-      };
     }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Describe failed after retries',
+        data: { category: 'internal', retryable: false },
+      },
+    };
   }
 
   private async handleContext(
@@ -699,39 +916,183 @@ export class DaemonServer {
       };
     }
 
-    try {
-      const result = await this.browserManager.getContext({
-        selector: params.selector,
-        depth: params.depth,
-        cwd,
-      });
-      return this.successResponse(id, result satisfies ContextResult);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('selector') || message.includes('locator')) {
-        const selector = params.selector ?? 'body';
-        const candidates = await this.browserManager.getSelectorCandidates(selector);
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await this.browserManager.getContext({
+          selector: params.selector,
+          depth: params.depth,
+          cwd,
+          timeoutMs: params.timeoutMs,
+        });
+        return this.successResponse(id, result satisfies ContextResult);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying context (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.TIMEOUT_BROWSER,
+              `Context timed out for selector: ${params.selector ?? 'body'}`,
+              { suggestion: 'Increase --timeout or reduce --depth.' }
+            ),
+          };
+        }
+        if (message.includes('selector') || message.includes('locator')) {
+          const selector = params.selector ?? 'body';
+          const candidates = await this.browserManager.getSelectorCandidates(selector);
+          return {
+            id,
+            ok: false,
+            error: createSelectorError(
+              ErrorCodes.SELECTOR_NOT_FOUND,
+              `Selector not found: ${selector}`,
+              selector,
+              { candidates }
+            ),
+          };
+        }
         return {
           id,
           ok: false,
-          error: createSelectorError(
-            ErrorCodes.SELECTOR_NOT_FOUND,
-            `Selector not found: ${selector}`,
-            selector,
-            { candidates }
-          ),
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: `Context failed: ${message}`,
+            data: { category: 'internal', retryable: false },
+          },
         };
       }
+    }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'Context failed after retries',
+        data: { category: 'internal', retryable: false },
+      },
+    };
+  }
+
+  private async handleA11y(id: RequestId, params: A11yParams): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
       return {
         id,
         ok: false,
         error: {
-          code: ErrorCodes.INTERNAL_ERROR,
-          message: `Context failed: ${message}`,
-          data: { category: 'internal', retryable: false },
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
         },
       };
     }
+
+    const level = params.level ?? 'AA';
+    if (level !== 'A' && level !== 'AA' && level !== 'AAA') {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INPUT_ENUM_INVALID,
+          message: 'Invalid --level. Must be A, AA, or AAA.',
+          data: { category: 'input', retryable: false, param: 'level' },
+        },
+      };
+    }
+
+    const retries = params.retries ?? 0;
+    const backoffMs = params.backoffMs ?? 250;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const result = await this.browserManager.getA11y({
+          selector: params.selector,
+          level: level as 'A' | 'AA' | 'AAA',
+          timeoutMs: params.timeoutMs,
+        });
+        return this.successResponse(id, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < retries && (message.includes('timeout') || message.includes('Timeout'))) {
+          console.error(
+            `Retrying a11y (${String(attempt + 1)}/${String(retries)}) after ${String(backoffMs)}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        if (message.includes('@axe-core/playwright')) {
+          return {
+            id,
+            ok: false,
+            error: {
+              code: ErrorCodes.BROWSER_NOT_READY,
+              message: `A11y scan unavailable: ${message}`,
+              data: {
+                category: 'browser',
+                retryable: false,
+                suggestion:
+                  'Install @axe-core/playwright and ensure Playwright browsers are installed.',
+              },
+            },
+          };
+        }
+        if (message.includes('Timeout') || message.includes('timeout')) {
+          return {
+            id,
+            ok: false,
+            error: createTimeoutError(
+              ErrorCodes.TIMEOUT_BROWSER,
+              `A11y scan timed out for selector: ${params.selector ?? 'page'}`,
+              { suggestion: 'Increase --timeout or simplify the page.' }
+            ),
+          };
+        }
+        if (message.includes('selector') || message.includes('locator')) {
+          const selector = params.selector ?? 'body';
+          const candidates = await this.browserManager.getSelectorCandidates(selector);
+          return {
+            id,
+            ok: false,
+            error: createSelectorError(
+              ErrorCodes.SELECTOR_NOT_FOUND,
+              `Selector not found: ${selector}`,
+              selector,
+              { candidates }
+            ),
+          };
+        }
+        return {
+          id,
+          ok: false,
+          error: {
+            code: ErrorCodes.INTERNAL_ERROR,
+            message: `A11y scan failed: ${message}`,
+            data: { category: 'internal', retryable: false },
+          },
+        };
+      }
+    }
+
+    return {
+      id,
+      ok: false,
+      error: {
+        code: ErrorCodes.INTERNAL_ERROR,
+        message: 'A11y scan failed after retries',
+        data: { category: 'internal', retryable: false },
+      },
+    };
   }
 
   private async handleDiff(
@@ -925,7 +1286,93 @@ export class DaemonServer {
   }
 
   private sendResponse(socket: Socket, response: Response): void {
+    if (!response.ok) {
+      this.lastError = response.error;
+    }
     const json = JSON.stringify(response);
     socket.write(json + '\n');
+  }
+
+  private handleDoctor(id: RequestId): Response {
+    const transport = getTransportConfig();
+    const endpoint = getSocketPath();
+    const checks: DoctorCheck[] = [];
+
+    const { running, pid } = this.isDaemonRunning();
+    checks.push({
+      id: 'daemon_running',
+      label: 'Daemon running',
+      ok: running,
+      detail: running ? `PID ${String(pid)}` : 'Not running',
+      suggestion: running ? undefined : 'Run: canvas daemon start',
+    });
+
+    const socketExists = transport.type === 'unix' ? existsSync(endpoint) : null;
+    if (transport.type === 'unix') {
+      checks.push({
+        id: 'socket_exists',
+        label: 'Socket exists',
+        ok: socketExists === true,
+        detail: socketExists ? 'Socket file present' : 'Socket file not found',
+        suggestion: socketExists ? undefined : 'Run: canvas daemon start',
+      });
+    }
+
+    const browserReady = this.browserManager.isConnected();
+    checks.push({
+      id: 'browser_connected',
+      label: 'Browser connected',
+      ok: browserReady,
+      detail: browserReady ? 'Active session connected' : 'No active session',
+      suggestion: browserReady ? undefined : 'Run: canvas connect <url>',
+    });
+
+    const browserChecks = this.browserManager.getBrowserInstallChecks();
+    const browsersOk = browserChecks.every((entry) => entry.installed);
+    checks.push({
+      id: 'browsers_installed',
+      label: 'Playwright browsers installed',
+      ok: browsersOk,
+      detail: browserChecks
+        .map(
+          (entry) =>
+            `${entry.engine}: ${entry.installed ? 'installed' : 'missing'} (${entry.executablePath})`
+        )
+        .join('; '),
+      suggestion: browsersOk ? undefined : 'Run: npx playwright install',
+    });
+
+    const ok = checks.every((check) => check.ok);
+
+    const result: DoctorResult = {
+      ok,
+      checks,
+      endpoint,
+      transport: transport.type,
+      browsers: browserChecks,
+      lastError: this.lastError ?? undefined,
+    };
+
+    return this.successResponse(id, result);
+  }
+
+  private isDaemonRunning(): { running: boolean; pid: number | null } {
+    const pidFile = getPidFilePath();
+    if (!existsSync(pidFile)) {
+      return { running: false, pid: null };
+    }
+
+    try {
+      const pidContent = readFileSync(pidFile, 'utf-8').trim();
+      const pid = parseInt(pidContent, 10);
+      try {
+        process.kill(pid, 0);
+        return { running: true, pid };
+      } catch {
+        return { running: false, pid };
+      }
+    } catch {
+      return { running: false, pid: null };
+    }
   }
 }

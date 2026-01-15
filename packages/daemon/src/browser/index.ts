@@ -23,7 +23,12 @@ import {
   createInputError,
   type DiffResult,
   type BoundingBox,
+  type A11yLevel,
+  type A11yResult,
+  type A11yViolation,
+  type DoctorBrowserCheck,
 } from '@wig/canvas-core';
+import AxeBuilder from '@axe-core/playwright';
 
 export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
 
@@ -32,10 +37,10 @@ export interface BrowserManagerConfig {
   headless?: boolean;
 }
 
-export interface SessionState {
-  url: string | null;
-  viewport: { width: number; height: number };
-  watchPaths: string[];
+export interface ConnectOptions {
+  watchPaths?: string[];
+  engine?: BrowserEngine;
+  timeoutMs?: number;
 }
 
 export interface ScreenshotOptions {
@@ -43,6 +48,13 @@ export interface ScreenshotOptions {
   selector?: string;
   cwd: string;
   inline?: boolean;
+  timeoutMs?: number;
+}
+
+export interface SessionState {
+  url: string | null;
+  viewport: { width: number; height: number };
+  watchPaths: string[];
 }
 
 export interface DiffOptions {
@@ -77,6 +89,7 @@ export interface ScreenshotResult {
 export interface StylesOptions {
   selector: string;
   props?: string[];
+  timeoutMs?: number;
 }
 
 export interface StylesResult {
@@ -88,6 +101,7 @@ export interface StylesResult {
 export interface DomOptions {
   selector?: string;
   depth?: number;
+  timeoutMs?: number;
 }
 
 export interface DomNode {
@@ -107,6 +121,7 @@ export interface DomResult {
 
 export interface DescribeOptions {
   selector: string;
+  timeoutMs?: number;
 }
 
 export interface DescribeResult {
@@ -126,6 +141,7 @@ export interface ContextOptions {
   selector?: string;
   depth?: number;
   cwd: string;
+  timeoutMs?: number;
 }
 
 export interface ContextResult {
@@ -173,6 +189,7 @@ export class BrowserManager {
   private onUiEvent: ((event: { type: string; ts: string; duration_ms?: number }) => void) | null =
     null;
   private lastHmrStartTs: number | null = null;
+  private defaultTimeoutMs = 30_000;
 
   constructor(
     config: BrowserManagerConfig = {},
@@ -220,7 +237,12 @@ export class BrowserManager {
     }
   }
 
-  async connect(url: string, options?: { watchPaths?: string[] }): Promise<SessionState> {
+  async connect(url: string, options?: ConnectOptions): Promise<SessionState> {
+    if (options?.engine && options.engine !== this.config.engine) {
+      this.config.engine = options.engine;
+      await this.closeBrowser();
+    }
+
     if (!this.browser) {
       await this.launchBrowser();
     }
@@ -242,6 +264,14 @@ export class BrowserManager {
       deviceScaleFactor: 1,
       reducedMotion: 'reduce',
     });
+
+    if (options?.timeoutMs) {
+      this.context.setDefaultTimeout(options.timeoutMs);
+      this.context.setDefaultNavigationTimeout(options.timeoutMs);
+    } else {
+      this.context.setDefaultTimeout(this.defaultTimeoutMs);
+      this.context.setDefaultNavigationTimeout(this.defaultTimeoutMs);
+    }
 
     this.page = await this.context.newPage();
     this.installUiEventBridge(this.page);
@@ -297,6 +327,73 @@ export class BrowserManager {
 
   getEngine(): BrowserEngine {
     return this.config.engine ?? 'chromium';
+  }
+
+  async getA11y(options: {
+    selector?: string;
+    level: A11yLevel;
+    timeoutMs?: number;
+  }): Promise<A11yResult> {
+    if (!this.page || this.page.isClosed()) {
+      throw new Error('No page connected. Use connect first.');
+    }
+
+    if (options.timeoutMs) {
+      this.page.setDefaultTimeout(options.timeoutMs);
+    } else {
+      this.page.setDefaultTimeout(this.defaultTimeoutMs);
+    }
+
+    let builder = new AxeBuilder({ page: this.page });
+    if (options.selector) {
+      builder = builder.include(options.selector);
+    }
+
+    const tags =
+      options.level === 'A' ? ['wcag2a'] : options.level === 'AAA' ? ['wcag2aaa'] : ['wcag2aa'];
+    builder = builder.withTags(tags);
+
+    const raw = (await builder.analyze()) as {
+      violations?: A11yViolation[];
+      passes?: A11yViolation[];
+      incomplete?: A11yViolation[];
+      inapplicable?: A11yViolation[];
+    };
+
+    const engine = this.getEngine();
+    const notes =
+      engine === 'chromium'
+        ? undefined
+        : [
+            'Some checks may vary by browser engine. For most consistent a11y results, prefer chromium.',
+          ];
+
+    return {
+      url: this.page.url(),
+      selector: options.selector,
+      level: options.level,
+      timestamp: new Date().toISOString(),
+      browser: engine,
+      notes,
+      violations: raw.violations ?? [],
+      passes: raw.passes,
+      incomplete: raw.incomplete,
+      inapplicable: raw.inapplicable,
+    };
+  }
+
+  getBrowserInstallChecks(): DoctorBrowserCheck[] {
+    const engines: BrowserEngine[] = ['chromium', 'firefox', 'webkit'];
+    return engines.map((engine) => {
+      const browserType = engine === 'firefox' ? firefox : engine === 'webkit' ? webkit : chromium;
+      const executablePath = browserType.executablePath();
+      const installed = executablePath.length > 0 && existsSync(executablePath);
+      return {
+        engine,
+        executablePath,
+        installed,
+      };
+    });
   }
 
   async getSelectorCandidates(failedSelector: string): Promise<string[]> {
@@ -379,6 +476,12 @@ export class BrowserManager {
       throw new Error('No page connected. Use connect first.');
     }
 
+    if (options.timeoutMs) {
+      this.page.setDefaultTimeout(options.timeoutMs);
+    } else {
+      this.page.setDefaultTimeout(this.defaultTimeoutMs);
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const screenshotsDir = join(options.cwd, SCREENSHOTS_DIR);
 
@@ -417,6 +520,8 @@ export class BrowserManager {
     if (!this.page || this.page.isClosed()) {
       throw new Error('No page connected. Use connect first.');
     }
+
+    this.page.setDefaultTimeout(this.defaultTimeoutMs);
 
     const threshold = options.threshold ?? 0.1;
 
@@ -769,6 +874,12 @@ export class BrowserManager {
       throw new Error('No page connected. Use connect first.');
     }
 
+    if (options.timeoutMs) {
+      this.page.setDefaultTimeout(options.timeoutMs);
+    } else {
+      this.page.setDefaultTimeout(this.defaultTimeoutMs);
+    }
+
     const propsToGet = options.props ?? [...DEFAULT_STYLE_PROPS];
     const locator = this.page.locator(options.selector).first();
 
@@ -800,6 +911,12 @@ export class BrowserManager {
       throw new Error('No page connected. Use connect first.');
     }
 
+    if (options.timeoutMs) {
+      this.page.setDefaultTimeout(options.timeoutMs);
+    } else {
+      this.page.setDefaultTimeout(this.defaultTimeoutMs);
+    }
+
     const depth = options.depth ?? DEFAULT_DOM_DEPTH;
     const rootSelector = options.selector ?? 'body';
     const locator = this.page.locator(rootSelector).first();
@@ -820,6 +937,12 @@ export class BrowserManager {
   async getDescribe(options: DescribeOptions): Promise<DescribeResult> {
     if (!this.page || this.page.isClosed()) {
       throw new Error('No page connected. Use connect first.');
+    }
+
+    if (options.timeoutMs) {
+      this.page.setDefaultTimeout(options.timeoutMs);
+    } else {
+      this.page.setDefaultTimeout(this.defaultTimeoutMs);
     }
 
     const locator = this.page.locator(options.selector).first();
@@ -892,6 +1015,12 @@ export class BrowserManager {
       throw new Error('No page connected. Use connect first.');
     }
 
+    if (options.timeoutMs) {
+      this.page.setDefaultTimeout(options.timeoutMs);
+    } else {
+      this.page.setDefaultTimeout(this.defaultTimeoutMs);
+    }
+
     const selector = options.selector ?? 'body';
     const depth = options.depth ?? DEFAULT_DOM_DEPTH;
 
@@ -913,35 +1042,39 @@ export class BrowserManager {
   }
 
   private installUiEventBridge(page: Page): void {
-    void page.exposeFunction('__canvas_emit_ui_event', (payload: unknown) => {
-      if (!payload || typeof payload !== 'object') return;
-      const p = payload as { type?: unknown; duration_ms?: unknown };
-      if (typeof p.type !== 'string') return;
+    void page
+      .exposeFunction('__canvas_emit_ui_event', (payload: unknown) => {
+        if (!payload || typeof payload !== 'object') return;
+        const p = payload as { type?: unknown; duration_ms?: unknown };
+        if (typeof p.type !== 'string') return;
 
-      const ts = new Date().toISOString();
+        const ts = new Date().toISOString();
 
-      if (p.type === 'hmr_start') {
-        this.lastHmrStartTs = Date.now();
-        this.onUiEvent?.({ type: 'hmr_start', ts });
-        return;
-      }
+        if (p.type === 'hmr_start') {
+          this.lastHmrStartTs = Date.now();
+          this.onUiEvent?.({ type: 'hmr_start', ts });
+          return;
+        }
 
-      if (p.type === 'hmr_complete') {
-        const startedAt = this.lastHmrStartTs;
-        const duration_ms =
-          typeof p.duration_ms === 'number'
-            ? p.duration_ms
-            : startedAt
-              ? Date.now() - startedAt
-              : undefined;
-        this.onUiEvent?.({ type: 'hmr_complete', ts, duration_ms });
-        return;
-      }
+        if (p.type === 'hmr_complete') {
+          const startedAt = this.lastHmrStartTs;
+          const duration_ms =
+            typeof p.duration_ms === 'number'
+              ? p.duration_ms
+              : startedAt
+                ? Date.now() - startedAt
+                : undefined;
+          this.onUiEvent?.({ type: 'hmr_complete', ts, duration_ms });
+          return;
+        }
 
-      this.onUiEvent?.({ type: p.type, ts });
-    });
+        this.onUiEvent?.({ type: p.type, ts });
+      })
+      .catch(() => {});
 
-    void page.addInitScript(`
+    void page
+      .addInitScript(
+        `
 (() => {
   const emit = (type, data) => {
     const fn = globalThis.__canvas_emit_ui_event;
@@ -992,7 +1125,9 @@ export class BrowserManager {
   } catch {
   }
 })();
-`);
+`
+      )
+      .catch(() => {});
   }
 
   private parseFirstAriaNode(yaml: string): { role: string; name?: string } {

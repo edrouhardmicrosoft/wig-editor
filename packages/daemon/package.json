@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@axe-core/playwright": "^4.11.0",
     "@wig/canvas-core": "workspace:*",
     "chokidar": "^5.0.0",
     "pixelmatch": "^7.1.0",

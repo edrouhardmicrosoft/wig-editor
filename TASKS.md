@@ -252,47 +252,47 @@
 
 ## Phase 5 — A11y + Polish (Week 8)
 
-[ ] Add `@axe-core/playwright` integration in daemon and implement `a11y` capability for page or selector scope.
-[ ] Verify axe runs: `canvas a11y --format json` returns an `axe`-like results object with violations array.
+[x] Add `@axe-core/playwright` integration in daemon and implement `a11y` capability for page or selector scope.
+[x] Verify axe runs: `canvas a11y --format json` returns an `axe`-like results object with violations array.
 
-[ ] Implement `canvas a11y [selector] --level A|AA|AAA` with default AA.
-[ ] Verify level: different levels change the applied rule tags or filtering behavior.
+[x] Implement `canvas a11y [selector] --level A|AA|AAA` with default AA.
+[x] Verify level: different levels change the applied rule tags or filtering behavior.
 
-[ ] Implement natural language a11y summary output (top violations + impacted nodes).
-[ ] Verify summary: text output includes violation count and at least one element hint.
+[x] Implement natural language a11y summary output (top violations + impacted nodes).
+[x] Verify summary: text output includes violation count and at least one element hint.
 
-[ ] Implement `--browser chromium|firefox|webkit` option wired end-to-end (daemon launches selected engine).
-[ ] Verify browsers: running with each engine starts successfully and can screenshot a simple page.
+[x] Implement `--browser chromium|firefox|webkit` option wired end-to-end (daemon launches selected engine).
+[x] Verify browsers: running with each engine starts successfully and can screenshot a simple page.
 
-[ ] Add “graceful degradation” notes in outputs when a capability is partial across browsers.
-[ ] Verify degradation messaging: in non-Chromium modes, any unsupported feature explains itself (no silent failure).
+[x] Add “graceful degradation” notes in outputs when a capability is partial across browsers.
+[x] Verify degradation messaging: in non-Chromium modes, any unsupported feature explains itself (no silent failure).
 
-[ ] Implement daemon auto-start behavior: if CLI can’t connect, it starts daemon and retries once.
-[ ] Verify auto-start: after `canvas daemon stop`, running `canvas screenshot` starts daemon automatically.
+[x] Implement daemon auto-start behavior: if CLI can’t connect, it starts daemon and retries once.
+[x] Verify auto-start: after `canvas daemon stop`, running `canvas screenshot` starts daemon automatically.
 
-[ ] Add `--timeout` option to commands that hit the browser (connect/screenshot/describe/dom/styles/a11y).
-[ ] Verify timeout: setting a low timeout reliably returns a 2xxx timeout error.
+[x] Add `--timeout` option to commands that hit the browser (connect/screenshot/describe/dom/styles/a11y).
+[x] Verify timeout: setting a low timeout reliably returns a 2xxx timeout error.
 
-[ ] Add `--retry` option for transient failures (navigation/timeouts) with backoff.
-[ ] Verify retry: simulate a transient failure and confirm retry attempts are visible in stderr logs.
+[x] Add `--retry` option for transient failures (navigation/timeouts) with backoff.
+[x] Verify retry: simulate a transient failure and confirm retry attempts are visible in stderr logs.
 
-[ ] Create `skills/opencode/canvas.yaml` with command descriptions and examples matching the implemented CLI.
-[ ] Verify skills file: examples run successfully against a demo dev server.
+[x] Create `skills/opencode/canvas.yaml` with command descriptions and examples matching the implemented CLI.
+[x] Verify skills file: examples run successfully against a demo dev server.
 
-[ ] Add package publishing metadata (`name: @wig/canvas`, bin name `canvas`, versioning, license).
-[ ] Verify package integrity: `npm pack` succeeds and contains built artifacts and bin entry.
+[x] Add package publishing metadata (`name: @wig/canvas`, bin name `canvas`, versioning, license).
+[x] Verify package integrity: `npm pack` succeeds and contains built artifacts and bin entry.
 
-[ ] Add agent-facing README “Quickstart” (install, daemon, connect, screenshot, describe, dom, styles, context, diff, watch, a11y).
-[ ] Verify README: commands in README work as written on a clean install AND include at least one end-to-end “agent workflow” example.
+[x] Add agent-facing README “Quickstart” (install, daemon, connect, screenshot, describe, dom, styles, context, diff, watch, a11y).
+[x] Verify README: commands in README work as written on a clean install AND include at least one end-to-end “agent workflow” example.
 
-[ ] Add `canvas doctor` command to print simple diagnostics (daemon reachable, browser installed, endpoint, last error).
-[ ] Verify doctor: running `canvas doctor` returns actionable output and exit code indicates pass/fail.
+[x] Add `canvas doctor` command to print simple diagnostics (daemon reachable, browser installed, endpoint, last error).
+[x] Verify doctor: running `canvas doctor` returns actionable output and exit code indicates pass/fail.
 
-[ ] Add `canvas clean` command to remove `.canvas/` artifacts safely (optionally keep baseline).
-[ ] Verify clean: after `canvas clean`, `.canvas/screenshots` and `.canvas/diffs` are empty/removed as expected.
+[x] Add `canvas clean` command to remove `.canvas/` artifacts safely (optionally keep baseline).
+[x] Verify clean: after `canvas clean`, `.canvas/screenshots` and `.canvas/diffs` are empty/removed as expected.
 
-[ ] Add a “Troubleshooting” section (daemon stuck, endpoint issues, OneDrive path issues, browser install issues).
-[ ] Verify troubleshooting: each item includes at least one concrete command to diagnose.
+[x] Add a “Troubleshooting” section (daemon stuck, endpoint issues, OneDrive path issues, browser install issues).
+[x] Verify troubleshooting: each item includes at least one concrete command to diagnose.
 
 ---
 

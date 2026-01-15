@@ -1,8 +1,9 @@
 {
-  "name": "@wig/canvas-cli",
-  "version": "0.0.0",
+  "name": "@wig/canvas",
+  "version": "0.0.1",
   "type": "module",
-  "description": "CLI for canvas - browser automation toolkit",
+  "description": "CLI-first canvas toolkit for browser automation",
+  "license": "MIT",
   "bin": {
     "canvas": "./dist/index.js"
   },
@@ -18,5 +19,13 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wig/canvas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wig/canvas/issues"
+  },
+  "homepage": "https://github.com/wig/canvas#readme"
 }

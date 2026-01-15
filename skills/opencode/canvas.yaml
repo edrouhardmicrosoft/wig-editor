@@ -1,0 +1,100 @@
+name: canvas
+version: 1
+summary: CLI-first canvas toolkit for browser automation.
+commands:
+  - name: canvas daemon start
+    description: Start the canvas daemon process.
+    examples:
+      - canvas daemon start
+      - canvas daemon start --foreground
+  - name: canvas daemon status
+    description: Show daemon status and endpoint info.
+    examples:
+      - canvas daemon status
+      - canvas daemon status --format json
+  - name: canvas daemon stop
+    description: Stop the canvas daemon process.
+    examples:
+      - canvas daemon stop
+  - name: canvas connect
+    description: Connect to a URL and open a browser session.
+    examples:
+      - canvas connect http://localhost:3000
+      - canvas connect http://localhost:3000 --browser firefox
+      - canvas connect http://localhost:3000 --watch . --watch src
+      - canvas connect http://localhost:3000 --timeout 60000 --retry 2 --retry-backoff 500
+  - name: canvas status
+    description: Show current session status.
+    examples:
+      - canvas status
+      - canvas status --format json
+  - name: canvas disconnect
+    description: Disconnect from the current browser session.
+    examples:
+      - canvas disconnect
+  - name: canvas screenshot
+    description: Take a screenshot of the viewport or an element.
+    examples:
+      - canvas screenshot
+      - canvas screenshot ".hero" --out ./tmp/hero.png
+      - canvas screenshot "#signup" --inline --format json
+      - canvas screenshot --timeout 15000 --retry 2
+  - name: canvas styles
+    description: Get computed styles for an element.
+    examples:
+      - canvas styles "body"
+      - canvas styles ".cta" --props color,display,background-color
+      - canvas styles "header" --timeout 15000 --retry 2
+  - name: canvas dom
+    description: Get DOM accessibility snapshot.
+    examples:
+      - canvas dom
+      - canvas dom "main" --depth 2
+      - canvas dom "body" --format yaml
+  - name: canvas describe
+    description: Get a natural language description of an element.
+    examples:
+      - canvas describe ".hero"
+      - canvas describe "#cta" --format json
+      - canvas describe ".card" --timeout 15000 --retry 2
+  - name: canvas context
+    description: Get full inspection context (screenshot, describe, dom, styles).
+    examples:
+      - canvas context
+      - canvas context ".hero" --depth 3
+      - canvas context ".hero" --format json
+      - canvas context ".hero" --timeout 20000 --retry 2
+  - name: canvas a11y
+    description: Run accessibility checks on the page or selector.
+    examples:
+      - canvas a11y
+      - canvas a11y "main" --level AA
+      - canvas a11y "#signup" --format json
+      - canvas a11y --timeout 20000 --retry 2
+  - name: canvas diff
+    description: Compare current screenshot against a baseline and output a visual diff.
+    examples:
+      - canvas diff
+      - canvas diff ".hero" --since last
+      - canvas diff --since 2026-01-14T10:00:00Z --threshold 0.2
+  - name: canvas watch
+    description: Stream daemon watch events as NDJSON.
+    examples:
+      - canvas watch
+      - canvas watch --format ndjson
+  - name: canvas execute
+    description: Execute JavaScript in the connected page context.
+    examples:
+      - canvas execute "await page.title()"
+      - canvas execute --file ./scripts/sample.ts
+  - name: canvas doctor
+    description: Run diagnostics on daemon connectivity and browser readiness.
+    examples:
+      - canvas doctor
+      - canvas doctor --format json
+  - name: canvas clean
+    description: Remove .canvas artifacts (screenshots, diffs, manifests).
+    examples:
+      - canvas clean
+      - canvas clean --keep-baseline
+      - canvas clean --format json

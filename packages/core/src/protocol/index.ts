@@ -31,7 +31,8 @@ export type MethodName =
   | 'a11y'
   | 'diff'
   | 'watch.subscribe'
-  | 'watch.unsubscribe';
+  | 'watch.unsubscribe'
+  | 'doctor';
 
 export interface Request<P = unknown> {
   id: RequestId;
