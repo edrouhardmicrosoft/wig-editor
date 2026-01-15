@@ -212,41 +212,41 @@
 
 ## Phase 4 — Watch Mode (Week 7)
 
-[ ] Implement `--watch <path>` option on `canvas connect` that tells daemon to watch that directory.
-[ ] Verify watch registration: daemon status shows the watch path(s) being monitored.
+[x] Implement `--watch <path>` option on `canvas connect` that tells daemon to watch that directory.
+[x] Verify watch registration: daemon status shows the watch path(s) being monitored.
 
-[ ] Add Chokidar watcher in daemon (emit `file_changed` events with path + timestamp).
-[ ] Verify file events: touching a file under watch path emits `file_changed` via `canvas watch`.
+[x] Add Chokidar watcher in daemon (emit `file_changed` events with path + timestamp).
+[x] Verify file events: touching a file under watch path emits `file_changed` via `canvas watch`.
 
-[ ] Implement injected HMR listener script and load it into the page on connect:
+[x] Implement injected HMR listener script and load it into the page on connect:
     - Vite: `import.meta.hot`
     - Webpack/Next (webpack): `module.hot` status hooks
     - Next (Turbopack): best-effort detection (may fall back to mutation heuristic)
 [ ] Verify HMR events: making a real UI change produces `hmr_start` and `hmr_complete` events (or a documented fallback event for Turbopack).
 
-[ ] Implement DOM-settled heuristic (quiet window + max wait) used after HMR completion before emitting `ui_ready`.
+[x] Implement DOM-settled heuristic (quiet window + max wait) used after HMR completion before emitting `ui_ready`.
 [ ] Verify DOM-settled: force a delayed render (e.g. setTimeout state update) and ensure `ui_ready` waits for the final mutation burst.
 
-[ ] Implement fallback “UI changed” detector (MutationObserver + debounce) if HMR hooks unavailable.
-[ ] Verify fallback: on a project without HMR hooks, DOM mutations still emit a “ui_changed” style event.
+[x] Implement fallback “UI changed” detector (MutationObserver + debounce) if HMR hooks unavailable.
+[x] Verify fallback: on a project without HMR hooks, DOM mutations still emit a “ui_changed” style event.
 
-[ ] Implement “UI ready” heuristic after HMR complete (debounce + stable DOM check).
-[ ] Verify ui_ready: `ui_ready` is emitted after `hmr_complete` and not before.
+[x] Implement “UI ready” heuristic after HMR complete (debounce + stable DOM check).
+[x] Verify ui_ready: `ui_ready` is emitted after `hmr_complete` and not before.
 
-[ ] Implement daemon event bus that emits events to subscribers.
-[ ] Verify multi-subscriber: two `canvas watch` processes both receive events.
+[x] Implement daemon event bus that emits events to subscribers.
+[x] Verify multi-subscriber: two `canvas watch` processes both receive events.
 
-[ ] Implement `canvas watch --format ndjson` CLI command that subscribes and streams events to stdout.
-[ ] Verify NDJSON: each line is a valid JSON object; no multi-line records.
+[x] Implement `canvas watch --format ndjson` CLI command that subscribes and streams events to stdout.
+[x] Verify NDJSON: each line is a valid JSON object; no multi-line records.
 
-[ ] Ensure watch stream uses NDJSON (one JSON object per line) and never mixes stderr logs into stdout.
-[ ] Verify clean stream: `canvas watch --format ndjson | jq .` works without parse errors.
+[x] Ensure watch stream uses NDJSON (one JSON object per line) and never mixes stderr logs into stdout.
+[x] Verify clean stream: `canvas watch --format ndjson | jq .` works without parse errors.
 
-[ ] Implement clean shutdown handling (SIGINT) for `canvas watch` (flush and exit 0).
-[ ] Verify shutdown: sending Ctrl+C closes without leaving the daemon or endpoint in a bad state.
+[x] Implement clean shutdown handling (SIGINT) for `canvas watch` (flush and exit 0).
+[x] Verify shutdown: sending Ctrl+C closes without leaving the daemon or endpoint in a bad state.
 
-[ ] Implement daemon graceful shutdown (stop accepting requests, close watchers, close Playwright) with a force-timeout fallback.
-[ ] Verify shutdown policy: daemon exits cleanly under normal conditions and does not hang indefinitely.
+[x] Implement daemon graceful shutdown (stop accepting requests, close watchers, close Playwright) with a force-timeout fallback.
+[x] Verify shutdown policy: daemon exits cleanly under normal conditions and does not hang indefinitely.
 
 ---
 

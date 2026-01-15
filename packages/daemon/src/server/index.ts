@@ -1,4 +1,5 @@
 import { createServer, type Server, type Socket } from 'node:net';
+import chokidar, { type FSWatcher } from 'chokidar';
 import { unlinkSync, existsSync, writeFileSync, chmodSync } from 'node:fs';
 import {
   type Request,
@@ -31,15 +32,38 @@ export interface DaemonState {
   running: boolean;
 }
 
+type WatchSubscriber = {
+  id: string;
+  socket: Socket;
+};
+
 export class DaemonServer {
   private server: Server | null = null;
   private socketPath: string;
   private connections: Set<Socket> = new Set();
   private browserManager: BrowserManager;
 
+  private nextSubscriberId = 1;
+  private watchSubscribers: Map<string, WatchSubscriber> = new Map();
+  private fsWatcher: FSWatcher | null = null;
+  private watchPaths: string[] = [];
+
+  private uiReadyQuietWindowMs = 250;
+  private uiReadyMaxWaitMs = 5_000;
+  private uiReadyTimer: NodeJS.Timeout | null = null;
+  private uiReadyMaxTimer: NodeJS.Timeout | null = null;
+  private uiReadyObserverInstalled = false;
+
   constructor() {
     this.socketPath = getSocketPath();
-    this.browserManager = new BrowserManager();
+    this.browserManager = new BrowserManager(
+      {},
+      {
+        onUiEvent: (event) => {
+          this.emitWatchEvent(event);
+        },
+      }
+    );
   }
 
   async start(): Promise<void> {
@@ -63,12 +87,18 @@ export class DaemonServer {
   }
 
   async stop(): Promise<void> {
+    this.clearUiReadyTimers();
+    await this.fsWatcher?.close();
+    this.fsWatcher = null;
+
     await this.browserManager.closeBrowser();
 
     for (const socket of this.connections) {
       socket.destroy();
     }
     this.connections.clear();
+
+    this.watchSubscribers.clear();
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -153,6 +183,43 @@ export class DaemonServer {
       return;
     }
 
+    if (request.method === 'watch.subscribe') {
+      const subscriberId = this.registerWatchSubscriber(socket);
+      const response: SuccessResponse<{ subscriberId: string }> = {
+        id: request.id,
+        ok: true,
+        result: { subscriberId },
+      };
+      this.sendResponse(socket, response);
+      return;
+    }
+
+    if (request.method === 'watch.unsubscribe') {
+      const subscriberId = (request.params as { subscriberId?: string }).subscriberId;
+      if (!subscriberId) {
+        const response: ErrorResponse = {
+          id: request.id,
+          ok: false,
+          error: {
+            code: ErrorCodes.INPUT_MISSING,
+            message: 'Missing required parameter: subscriberId',
+            data: { category: 'input', retryable: false, param: 'subscriberId' },
+          },
+        };
+        this.sendResponse(socket, response);
+        return;
+      }
+
+      const removed = this.unregisterWatchSubscriber(subscriberId);
+      const response: SuccessResponse<{ unsubscribed: boolean }> = {
+        id: request.id,
+        ok: true,
+        result: { unsubscribed: removed },
+      };
+      this.sendResponse(socket, response);
+      return;
+    }
+
     const response = await this.dispatch(request);
     this.sendResponse(socket, response);
   }
@@ -227,7 +294,10 @@ export class DaemonServer {
     }
   }
 
-  private async handleConnect(id: RequestId, params: { url: string }): Promise<Response> {
+  private async handleConnect(
+    id: RequestId,
+    params: { url: string; watchPaths?: string[] }
+  ): Promise<Response> {
     if (!params.url) {
       return {
         id,
@@ -241,12 +311,19 @@ export class DaemonServer {
     }
 
     try {
-      const sessionState = await this.browserManager.connect(params.url);
+      const watchPaths = (params.watchPaths ?? []).filter(
+        (p) => typeof p === 'string' && p.length > 0
+      );
+      const sessionState = await this.browserManager.connect(params.url, {
+        watchPaths,
+      });
+      this.setWatchPaths(watchPaths);
       return this.successResponse(id, {
         connected: true,
         url: sessionState.url ?? undefined,
         browser: this.browserManager.getEngine(),
         viewport: sessionState.viewport,
+        watchPaths: sessionState.watchPaths,
       } satisfies SessionInfo);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -275,6 +352,9 @@ export class DaemonServer {
 
   private async handleDisconnect(id: RequestId): Promise<Response> {
     await this.browserManager.disconnect();
+    this.setWatchPaths([]);
+    this.clearUiReadyTimers();
+    this.uiReadyObserverInstalled = false;
     return this.successResponse(id, { disconnected: true });
   }
 
@@ -436,6 +516,7 @@ export class DaemonServer {
       url: state.url ?? undefined,
       browser: this.browserManager.getEngine(),
       viewport: state.viewport,
+      watchPaths: this.watchPaths,
     };
   }
 
@@ -703,6 +784,144 @@ export class DaemonServer {
 
   private successResponse<T>(id: RequestId, result: T): SuccessResponse<T> {
     return { id, ok: true, result };
+  }
+
+  private registerWatchSubscriber(socket: Socket): string {
+    const id = `sub_${String(this.nextSubscriberId++)}`;
+    this.watchSubscribers.set(id, { id, socket });
+    return id;
+  }
+
+  private unregisterWatchSubscriber(subscriberId: string): boolean {
+    return this.watchSubscribers.delete(subscriberId);
+  }
+
+  private emitWatchEvent(event: unknown): void {
+    const line = JSON.stringify(event) + '\n';
+    for (const sub of this.watchSubscribers.values()) {
+      try {
+        sub.socket.write(line);
+      } catch {
+        this.watchSubscribers.delete(sub.id);
+      }
+    }
+
+    const e = event as { type?: unknown; ts?: unknown };
+    if (e && typeof e === 'object' && typeof e.type === 'string') {
+      if (e.type === 'hmr_complete' || e.type === 'ui_changed') {
+        this.scheduleUiReady();
+      }
+    }
+  }
+
+  private setWatchPaths(nextWatchPaths: string[]): void {
+    const unique = [...new Set(nextWatchPaths)];
+    this.watchPaths = unique;
+
+    void this.fsWatcher?.close();
+    this.fsWatcher = null;
+
+    if (unique.length === 0) {
+      return;
+    }
+
+    this.fsWatcher = chokidar.watch(unique, {
+      ignoreInitial: true,
+      ignored: [/(^|[\\/])node_modules([\\/]|$)/, /(^|[\\/])\.git([\\/]|$)/],
+      awaitWriteFinish: {
+        stabilityThreshold: 200,
+        pollInterval: 50,
+      },
+    });
+
+    this.fsWatcher.on('all', (_eventName, path) => {
+      this.emitWatchEvent({
+        type: 'file_changed',
+        ts: new Date().toISOString(),
+        path,
+      });
+    });
+
+    this.fsWatcher.on('error', (err) => {
+      console.error('Watcher error:', err instanceof Error ? err.message : String(err));
+    });
+  }
+
+  private scheduleUiReady(): void {
+    const page = this.browserManager.getPage();
+    if (!page) {
+      return;
+    }
+
+    if (!this.uiReadyObserverInstalled) {
+      this.uiReadyObserverInstalled = true;
+      void page
+        .exposeFunction('__canvas_notify_dom_mutation', () => {
+          this.resetUiReadyTimers();
+        })
+        .catch(() => {
+          this.uiReadyObserverInstalled = false;
+        });
+
+      void page
+        .addInitScript(
+          `
+(() => {
+  const fn = globalThis.__canvas_notify_dom_mutation;
+  if (typeof fn !== 'function') return;
+  if (typeof globalThis.MutationObserver !== 'function') return;
+
+  const observer = new MutationObserver(() => {
+    try {
+      globalThis.__canvas_notify_dom_mutation();
+    } catch {
+    }
+  });
+
+  observer.observe(document.documentElement, {
+    attributes: true,
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+})();
+`
+        )
+        .catch(() => {
+          this.uiReadyObserverInstalled = false;
+        });
+    }
+
+    this.resetUiReadyTimers();
+  }
+
+  private resetUiReadyTimers(): void {
+    if (this.uiReadyTimer) {
+      clearTimeout(this.uiReadyTimer);
+    }
+
+    this.uiReadyTimer = setTimeout(() => {
+      this.emitWatchEvent({ type: 'ui_ready', ts: new Date().toISOString() });
+      this.clearUiReadyTimers();
+    }, this.uiReadyQuietWindowMs);
+
+    if (!this.uiReadyMaxTimer) {
+      this.uiReadyMaxTimer = setTimeout(() => {
+        this.emitWatchEvent({ type: 'ui_ready', ts: new Date().toISOString() });
+        this.clearUiReadyTimers();
+      }, this.uiReadyMaxWaitMs);
+    }
+  }
+
+  private clearUiReadyTimers(): void {
+    if (this.uiReadyTimer) {
+      clearTimeout(this.uiReadyTimer);
+      this.uiReadyTimer = null;
+    }
+    if (this.uiReadyMaxTimer) {
+      clearTimeout(this.uiReadyMaxTimer);
+      this.uiReadyMaxTimer = null;
+    }
   }
 
   private sendResponse(socket: Socket, response: Response): void {

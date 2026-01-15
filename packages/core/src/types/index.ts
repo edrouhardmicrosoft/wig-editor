@@ -82,7 +82,12 @@ export interface ContextParams {
   depth?: number;
 }
 
-export type WatchEventType = 'file_changed' | 'hmr_start' | 'hmr_complete' | 'ui_ready';
+export type WatchEventType =
+  | 'file_changed'
+  | 'hmr_start'
+  | 'hmr_complete'
+  | 'ui_changed'
+  | 'ui_ready';
 
 export interface WatchEvent {
   type: WatchEventType;

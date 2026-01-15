@@ -35,6 +35,7 @@ export interface BrowserManagerConfig {
 export interface SessionState {
   url: string | null;
   viewport: { width: number; height: number };
+  watchPaths: string[];
 }
 
 export interface ScreenshotOptions {
@@ -168,8 +169,16 @@ export class BrowserManager {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private config: BrowserManagerConfig;
+  private watchPaths: string[] = [];
+  private onUiEvent: ((event: { type: string; ts: string; duration_ms?: number }) => void) | null =
+    null;
+  private lastHmrStartTs: number | null = null;
 
-  constructor(config: BrowserManagerConfig = {}) {
+  constructor(
+    config: BrowserManagerConfig = {},
+    options?: { onUiEvent?: (event: { type: string; ts: string; duration_ms?: number }) => void }
+  ) {
+    this.onUiEvent = options?.onUiEvent ?? null;
     this.config = {
       engine: config.engine ?? 'chromium',
       headless: config.headless ?? true,
@@ -211,7 +220,7 @@ export class BrowserManager {
     }
   }
 
-  async connect(url: string): Promise<SessionState> {
+  async connect(url: string, options?: { watchPaths?: string[] }): Promise<SessionState> {
     if (!this.browser) {
       await this.launchBrowser();
     }
@@ -235,14 +244,18 @@ export class BrowserManager {
     });
 
     this.page = await this.context.newPage();
+    this.installUiEventBridge(this.page);
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
 
     const currentUrl = this.page.url();
     console.error(`Connected to: ${currentUrl}`);
 
+    this.watchPaths = options?.watchPaths ?? [];
+
     return {
       url: currentUrl,
       viewport: DEFAULT_VIEWPORT,
+      watchPaths: this.watchPaths,
     };
   }
 
@@ -257,17 +270,20 @@ export class BrowserManager {
       this.context = null;
     }
 
+    this.watchPaths = [];
+
     console.error('Disconnected from page');
   }
 
   getSessionState(): SessionState {
     if (!this.page) {
-      return { url: null, viewport: DEFAULT_VIEWPORT };
+      return { url: null, viewport: DEFAULT_VIEWPORT, watchPaths: this.watchPaths };
     }
 
     return {
       url: this.page.url(),
       viewport: DEFAULT_VIEWPORT,
+      watchPaths: this.watchPaths,
     };
   }
 
@@ -894,6 +910,89 @@ export class BrowserManager {
       dom,
       styles,
     };
+  }
+
+  private installUiEventBridge(page: Page): void {
+    void page.exposeFunction('__canvas_emit_ui_event', (payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return;
+      const p = payload as { type?: unknown; duration_ms?: unknown };
+      if (typeof p.type !== 'string') return;
+
+      const ts = new Date().toISOString();
+
+      if (p.type === 'hmr_start') {
+        this.lastHmrStartTs = Date.now();
+        this.onUiEvent?.({ type: 'hmr_start', ts });
+        return;
+      }
+
+      if (p.type === 'hmr_complete') {
+        const startedAt = this.lastHmrStartTs;
+        const duration_ms =
+          typeof p.duration_ms === 'number'
+            ? p.duration_ms
+            : startedAt
+              ? Date.now() - startedAt
+              : undefined;
+        this.onUiEvent?.({ type: 'hmr_complete', ts, duration_ms });
+        return;
+      }
+
+      this.onUiEvent?.({ type: p.type, ts });
+    });
+
+    void page.addInitScript(`
+(() => {
+  const emit = (type, data) => {
+    const fn = globalThis.__canvas_emit_ui_event;
+    if (typeof fn === 'function') {
+      fn({ type, duration_ms: data?.duration_ms });
+    }
+  };
+
+  if (typeof globalThis.MutationObserver === 'function') {
+    let timer = null;
+    const observer = new MutationObserver(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => {
+        emit('ui_changed');
+      }, 250);
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  try {
+    const ws = new WebSocket(\`ws://\${location.host}/_next/webpack-hmr\`);
+    let hmrStartTs = null;
+    ws.addEventListener('message', (ev) => {
+      if (typeof ev.data !== 'string') return;
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg && msg.action === 'building') {
+          hmrStartTs = Date.now();
+          emit('hmr_start');
+          return;
+        }
+        if (msg && (msg.action === 'built' || msg.action === 'sync')) {
+          const dur = hmrStartTs ? Date.now() - hmrStartTs : undefined;
+          emit('hmr_complete', { duration_ms: dur });
+          hmrStartTs = null;
+        }
+      } catch {
+      }
+    });
+  } catch {
+  }
+})();
+`);
   }
 
   private parseFirstAriaNode(yaml: string): { role: string; name?: string } {

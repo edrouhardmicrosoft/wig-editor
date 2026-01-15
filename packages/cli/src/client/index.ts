@@ -11,6 +11,7 @@ import {
 
 export class DaemonClient {
   private socket: Socket | null = null;
+  private lineListeners: Array<(line: string) => void> = [];
   private socketPath: string;
   private pendingRequests: Map<
     string,
@@ -98,7 +99,17 @@ export class DaemonClient {
     });
   }
 
+  onLine(listener: (line: string) => void): void {
+    this.lineListeners.push(listener);
+  }
+
   private handleResponse(line: string): void {
+    for (const listener of this.lineListeners) {
+      try {
+        listener(line);
+      } catch {}
+    }
+
     try {
       const response = JSON.parse(line) as Response;
       const pending = this.pendingRequests.get(response.id);

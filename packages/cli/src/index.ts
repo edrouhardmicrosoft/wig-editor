@@ -34,6 +34,10 @@ program
 
 const daemonCmd = program.command('daemon').description('Manage the canvas daemon process');
 
+function collectString(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
 function isDaemonRunning(): { running: boolean; pid: number | null } {
   const pidFile = getPidFilePath();
   if (!existsSync(pidFile)) {
@@ -261,12 +265,19 @@ program
   .command('connect')
   .description('Connect to a URL and open a browser session')
   .argument('<url>', 'URL to connect to')
+  .option(
+    '--watch <path>',
+    'Watch a directory for changes (may be specified multiple times)',
+    collectString,
+    []
+  )
   .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
-  .action(async (url: string, options: { format: string }) => {
+  .action(async (url: string, options: { format: string; watch: string[] }) => {
     const format = options.format as OutputFormat;
+    const watchPaths = (options.watch ?? []).filter((p) => p.trim().length > 0);
     try {
       const response = await withClient(async (client) => {
-        return client.send<SessionInfo>('connect', { url });
+        return client.send<SessionInfo>('connect', { url, watchPaths });
       });
       render(response, format, (result) => {
         console.log(`Connected to: ${result.url ?? url}`);
@@ -580,6 +591,68 @@ program
         renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
         renderError(`Failed to describe: ${message}`, format);
+      }
+    }
+  });
+
+program
+  .command('watch')
+  .description('Stream daemon watch events')
+  .option('--format <format>', 'Output format (ndjson)', 'ndjson')
+  .action(async (options: { format: string }) => {
+    const format = options.format as OutputFormat;
+    if (format !== 'ndjson') {
+      renderError('watch only supports --format ndjson', format);
+      return;
+    }
+
+    try {
+      await withClient(async (client) => {
+        const response = await client.send<{ subscriberId: string }>('watch.subscribe', {});
+        if (!isSuccessResponse(response)) {
+          render(response, format, () => {});
+          return;
+        }
+
+        const subscriberId = response.result.subscriberId;
+
+        let shuttingDown = false;
+        const shutdown = async (): Promise<void> => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          try {
+            await client.send('watch.unsubscribe', { subscriberId });
+          } catch {}
+          process.exit(0);
+        };
+
+        process.on('SIGINT', () => {
+          void shutdown();
+        });
+
+        client.onLine((msg: string) => {
+          try {
+            const parsed = JSON.parse(msg) as { ok?: unknown; id?: unknown };
+            if (
+              parsed &&
+              typeof parsed === 'object' &&
+              typeof parsed.ok === 'boolean' &&
+              typeof parsed.id === 'string'
+            ) {
+              return;
+            }
+          } catch {}
+          process.stdout.write(msg + '\n');
+        });
+
+        await new Promise(() => {});
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to watch: ${message}`, format);
       }
     }
   });

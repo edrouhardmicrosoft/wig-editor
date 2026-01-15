@@ -36,14 +36,36 @@ console.error(`canvasd ${DAEMON_VERSION} starting...`);
 
 const server = new DaemonServer();
 
+const FORCE_SHUTDOWN_TIMEOUT_MS = 10_000;
+
+const shutdown = (signal: string) => {
+  console.error(`Received ${signal}, shutting down...`);
+
+  const timeout = setTimeout(() => {
+    console.error('Shutdown timed out; forcing exit.');
+    process.exit(1);
+  }, FORCE_SHUTDOWN_TIMEOUT_MS);
+
+  void server
+    .stop()
+    .then(() => {
+      clearTimeout(timeout);
+      process.exit(0);
+    })
+    .catch((err: unknown) => {
+      clearTimeout(timeout);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('Shutdown failed:', message);
+      process.exit(1);
+    });
+};
+
 process.on('SIGINT', () => {
-  console.error('Received SIGINT, shutting down...');
-  void server.stop().then(() => process.exit(0));
+  shutdown('SIGINT');
 });
 
 process.on('SIGTERM', () => {
-  console.error('Received SIGTERM, shutting down...');
-  void server.stop().then(() => process.exit(0));
+  shutdown('SIGTERM');
 });
 
 server.start().catch((err: unknown) => {

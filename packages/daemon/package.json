@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@wig/canvas-core": "workspace:*",
+    "chokidar": "^5.0.0",
     "pixelmatch": "^7.1.0",
     "playwright": "^1.57.0",
     "pngjs": "^7.0.0"
