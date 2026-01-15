@@ -86,6 +86,69 @@ canvas a11y ".hero" --format json
 canvas screenshot ".hero" --out ./tmp/hero.png
 ```
 
+## See What Canvas Sees (Live Viewer)
+
+Canvas is CLI-first and headless by default. Here's how to see what the agent sees:
+
+### Option 1: Headful Mode (Recommended for Development)
+
+Run the browser with a visible window:
+
+```bash
+canvas daemon start --headful
+canvas connect http://localhost:3000
+```
+
+A browser window appears — you can watch it live as the agent navigates and interacts.
+
+> **Note:** `--headful` is planned but not yet implemented. Track progress in PLAN.md.
+
+### Option 2: Watch Mode with Live Screenshots
+
+Stream screenshots alongside file/HMR events:
+
+```bash
+canvas watch --live --interval 2000 --format ndjson
+```
+
+Each `screenshot` event includes a `base64` field you can decode and display.
+
+For terminal image preview (macOS iTerm2):
+```bash
+canvas watch --live --format ndjson | while read line; do
+  echo "$line" | jq -r 'select(.type=="screenshot") | .base64' | base64 -d | imgcat
+done
+```
+
+> **Note:** `--live` flag is planned but not yet implemented.
+
+### Option 3: Periodic Screenshots
+
+Take manual snapshots to see current state:
+
+```bash
+# Full viewport
+canvas screenshot --out ./tmp/current.png
+open ./tmp/current.png
+
+# Specific element
+canvas screenshot ".hero" --out ./tmp/hero.png
+```
+
+### Option 4: Context Bundle
+
+Get a full snapshot of what the agent sees for an element:
+
+```bash
+canvas context ".hero" --format json --inline
+```
+
+Returns screenshot (base64), DOM tree, styles, and description in one call.
+
+### Coming Soon: Web Viewer
+
+A built-in web viewer (`canvas viewer start`) for smooth, real-time browser streaming is on the roadmap. See PLAN.md "Live Viewer" section for architecture details.
+
 ## Troubleshooting
 
 ### Daemon isn’t running

@@ -414,6 +414,123 @@ Notes:
 
 ---
 
+## Live Viewer — "See What Canvas Sees"
+
+The Live Viewer lets users and agents see what Canvas sees in real-time — the browser as it navigates, screenshots as they're captured, and actions as they happen.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         USER / AGENT                            │
+│                                                                 │
+│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
+│   │   Terminal   │    │  Web Viewer  │    │   VS Code    │     │
+│   │  (watch cmd) │    │  (localhost) │    │  (extension) │     │
+│   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘     │
+│          │                   │                   │              │
+└──────────┼───────────────────┼───────────────────┼──────────────┘
+           │                   │                   │
+           ▼                   ▼                   ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    canvasd (daemon)                          │
+    │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+    │  │  Viewer Hub │  │  Screencast │  │ Event Stream│          │
+    │  │  (WebSocket)│  │  (CDP/poll) │  │  (NDJSON)   │          │
+    │  └─────────────┘  └─────────────┘  └─────────────┘          │
+    │                          │                                   │
+    │                          ▼                                   │
+    │                   ┌─────────────┐                            │
+    │                   │  Playwright │                            │
+    │                   │  (Browser)  │                            │
+    │                   └─────────────┘                            │
+    └─────────────────────────────────────────────────────────────┘
+```
+
+### Three Tiers of Live Viewing
+
+| Tier | Complexity | Latency | Use Case |
+|------|------------|---------|----------|
+| **1. Headful mode** | Low | Real-time | Dev/debugging — watch the browser window |
+| **2. Screenshot polling** | Medium | 1-5s | Terminal/agent — periodic snapshots |
+| **3. CDP Screencast** | High | ~100ms | Web UI — smooth video-like stream |
+
+### Tier 1: Headful Mode (Quick Win)
+
+Run the browser with a visible window:
+
+```bash
+canvas daemon start --headful
+canvas connect http://localhost:3000
+# Browser window appears — watch it live
+```
+
+**Implementation:** Pass `headless: false` to Playwright. Works immediately.
+
+**Limitations:** Local only, can't embed in web UI or VS Code.
+
+### Tier 2: Screenshot Polling / Live Watch
+
+Stream screenshots at intervals via `canvas watch`:
+
+```bash
+canvas watch --live --interval 1000 --format ndjson
+```
+
+Output:
+```json
+{"type":"screenshot","ts":"...","path":".canvas/live/latest.png","base64":"iVBOR..."}
+{"type":"file_changed","path":"./src/App.tsx","ts":"..."}
+{"type":"ui_ready","ts":"..."}
+{"type":"screenshot","ts":"...","path":".canvas/live/latest.png","base64":"iVBOR..."}
+```
+
+**Use cases:** Terminal image viewers, agent consumption, simple web polling.
+
+### Tier 3: CDP Screencast (Smooth Streaming)
+
+Use Chrome DevTools Protocol's `Page.screencastFrame` for low-latency video:
+
+```bash
+canvas viewer start
+# Opens http://localhost:9222/canvas-viewer
+```
+
+**Implementation:** WebSocket endpoint streams JPEG frames from CDP.
+
+**Limitations:** Chromium only (Firefox/WebKit unsupported).
+
+### CLI Commands (Proposed)
+
+```bash
+# Tier 1: Headful
+canvas daemon start --headful
+
+# Tier 2: Live watch with screenshots  
+canvas watch --live [--interval <ms>] [--format ndjson]
+
+# Tier 3: Screencast viewer
+canvas viewer start [--port 9222]
+canvas viewer stop
+```
+
+### Extended Event Types
+
+Current: `file_changed`, `hmr_start`, `hmr_complete`, `ui_ready`
+
+New for live viewer:
+- `screenshot` — periodic or triggered capture with base64/path
+- `navigation` — page URL changed
+- `action` — agent performed click/type (future)
+
+### Implementation Priority
+
+1. **Headful mode** — hours, immediate value
+2. **Screenshot polling** — days, cross-platform
+3. **CDP Screencast** — week+, best UX
+
+---
+
 ## Future: Phase 2 — WYSIWYG Visual Editing (Figma-like)
 
 Not part of MVP, but an explicit roadmap goal.

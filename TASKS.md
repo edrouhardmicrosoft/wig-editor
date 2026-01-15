@@ -306,6 +306,52 @@
 
 ---
 
+## Phase 7 — Live Viewer (Post-MCP)
+
+### Tier 1: Headful Mode
+
+[ ] Add `--headful` flag to `canvas daemon start` command.
+[ ] Verify headful: `canvas daemon start --headful && canvas connect <url>` opens a visible browser window.
+
+[ ] Add `--headful` flag to `canvas connect` for per-session headful override.
+[ ] Verify per-session: can switch between headful and headless without daemon restart.
+
+### Tier 2: Live Screenshot Streaming
+
+[ ] Add `--live` flag to `canvas watch` that enables periodic screenshot capture.
+[ ] Verify live flag: `canvas watch --live --format ndjson` emits `screenshot` events.
+
+[ ] Add `--interval <ms>` option to control screenshot frequency (default 2000ms).
+[ ] Verify interval: changing interval affects screenshot event frequency.
+
+[ ] Emit `screenshot` event after each `ui_ready` event (in addition to interval).
+[ ] Verify post-HMR screenshot: changing a file triggers screenshot after UI settles.
+
+[ ] Add `navigation` event type when page URL changes.
+[ ] Verify navigation: `canvas execute "await page.goto('...')"` emits navigation event.
+
+[ ] Create `.canvas/live/` directory for rotating live screenshots.
+[ ] Verify live dir: screenshots are written and old ones are cleaned up.
+
+### Tier 3: CDP Screencast (Chromium Only)
+
+[ ] Implement `canvas viewer start [--port]` command that starts WebSocket server.
+[ ] Verify viewer start: command starts and prints URL.
+
+[ ] Implement CDP `Page.startScreencast()` integration in daemon.
+[ ] Verify screencast: frames are captured when viewer is connected.
+
+[ ] Create minimal HTML/JS viewer client served by daemon.
+[ ] Verify viewer client: opening URL in browser shows live browser stream.
+
+[ ] Implement `canvas viewer stop` command.
+[ ] Verify viewer stop: WebSocket server shuts down cleanly.
+
+[ ] Add graceful degradation message when using Firefox/WebKit.
+[ ] Verify degradation: non-Chromium browsers explain screencast unavailability.
+
+---
+
 ## (Future) Phase 2 — WYSIWYG Visual Editing (Roadmap Tasks)
 
 [ ] Define a stable element identity strategy (e.g., injected `data-wig-id`) that can survive HMR.

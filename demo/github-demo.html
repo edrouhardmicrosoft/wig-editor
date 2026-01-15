@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitHub · Homepage Demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --muted: #8b949e;
+        --text: #c9d1d9;
+        --accent: #2f81f7;
+        --border: #21262d;
+        --glow: #8250df;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.5;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .container {
+        width: min(1200px, 100%);
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      header {
+        position: sticky;
+        top: 0;
+        background: rgba(13, 17, 23, 0.96);
+        border-bottom: 1px solid var(--border);
+        backdrop-filter: blur(8px);
+        z-index: 10;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 72px;
+        gap: 24px;
+      }
+
+      .nav-left,
+      .nav-right {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+
+      .nav-logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 18px;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 16px;
+        font-size: 14px;
+      }
+
+      .nav-links a {
+        color: var(--text);
+      }
+
+      .pill {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .btn {
+        border-radius: 6px;
+        padding: 10px 16px;
+        border: 1px solid var(--border);
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      .btn.primary {
+        background: var(--accent);
+        border-color: transparent;
+        color: white;
+      }
+
+      .hero {
+        padding: 80px 0 60px;
+        background: radial-gradient(circle at 30% 0%, rgba(130, 80, 223, 0.35), transparent
+              55%),
+          radial-gradient(circle at 70% 10%, rgba(46, 164, 79, 0.18), transparent 50%);
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 32px;
+        align-items: center;
+      }
+
+      h1 {
+        font-size: clamp(32px, 5vw, 54px);
+        margin: 0 0 16px;
+      }
+
+      h2 {
+        font-size: clamp(22px, 3vw, 32px);
+        margin: 0 0 16px;
+      }
+
+      h3 {
+        font-size: 20px;
+        margin: 0 0 8px;
+      }
+
+      p {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+
+      .hero-cta {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .input {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        padding: 10px 12px;
+        border-radius: 6px;
+        color: var(--text);
+        min-width: 240px;
+      }
+
+      .section {
+        padding: 60px 0;
+      }
+
+      .section.dark {
+        background: var(--panel);
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 24px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+      }
+
+      .placeholder {
+        background: linear-gradient(135deg, rgba(130, 80, 223, 0.3), rgba(46, 164, 79, 0.2));
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        height: 180px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+        margin-top: 24px;
+      }
+
+      .stat {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        background: #0f1420;
+      }
+
+      .logos {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 16px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin: 16px 0 24px;
+      }
+
+      .tabs span {
+        padding: 6px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .tabs span.active {
+        border-color: var(--glow);
+        color: white;
+      }
+
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 48px 0 64px;
+        background: #0b0f14;
+      }
+
+      .footer-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 24px;
+      }
+
+      .footer-grid h4 {
+        margin: 0 0 12px;
+      }
+
+      .footer-grid a {
+        display: block;
+        color: var(--muted);
+        font-size: 14px;
+        margin-bottom: 8px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="container nav">
+        <div class="nav-left">
+          <div class="nav-logo">🐙 GitHub</div>
+          <nav class="nav-links">
+            <a href="#">Platform</a>
+            <a href="#">Solutions</a>
+            <a href="#">Resources</a>
+            <a href="#">Open Source</a>
+            <a href="#">Enterprise</a>
+            <a href="#">Pricing</a>
+          </nav>
+        </div>
+        <div class="nav-right">
+          <span class="pill">Search or jump to…</span>
+          <a class="btn" href="#">Sign in</a>
+          <a class="btn primary" href="#">Sign up</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container hero-grid">
+          <div>
+            <div class="pill" style="width: fit-content; margin-bottom: 16px;">
+              Explore the latest tools from Universe ’25
+            </div>
+            <h1>The future of building happens together</h1>
+            <p>
+              Tools and trends evolve, but collaboration endures. With GitHub, developers,
+              agents, and code come together on one platform.
+            </p>
+            <div class="hero-cta">
+              <input class="input" type="email" placeholder="Enter your email" />
+              <button class="btn primary">Sign up for GitHub</button>
+              <button class="btn">Try GitHub Copilot free</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Mona &amp; Copilot demo</h3>
+            <p>
+              A playful hero illustration sits here, with a soft purple glow and motion
+              accents that match GitHub’s homepage.
+            </p>
+            <div class="pill" style="margin-top: 16px;">Live product demo</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <h2>GitHub features</h2>
+          <p>Write, test, and fix code quickly with GitHub Copilot.</p>
+          <div class="tabs">
+            <span class="active">Code</span>
+            <span>Plan</span>
+            <span>Collaborate</span>
+            <span>Automate</span>
+            <span>Secure</span>
+          </div>
+          <div class="card">
+            <h3>Copilot in the editor</h3>
+            <p>
+              A demonstration animation of Copilot refactoring duplicated logic into a
+              reusable function.
+            </p>
+          </div>
+          <div class="placeholder" style="margin-top: 20px;">
+            Copilot code editor demo animation
+          </div>
+        </div>
+      </section>
+
+      <section class="section dark">
+        <div class="container">
+          <h2>GitHub customers</h2>
+          <div class="logos">
+            <div>American Airlines</div>
+            <div>Duolingo</div>
+            <div>Ernst &amp; Young</div>
+            <div>Ford</div>
+            <div>Infosys</div>
+            <div>Mercado Libre</div>
+            <div>Mercedes-Benz</div>
+            <div>Shopify</div>
+            <div>Philips</div>
+            <div>Société Générale</div>
+            <div>Spotify</div>
+            <div>Vodafone</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <h2>Accelerate your entire workflow</h2>
+          <p>
+            From your first line of code to final deployment, GitHub provides AI and
+            automation tools to help you build and ship better software faster.
+          </p>
+          <div class="grid-3">
+            <div class="card">
+              <h3>Automate your path to production</h3>
+              <p>Ship faster with secure, reliable CI/CD.</p>
+              <button class="btn">Explore GitHub Actions</button>
+            </div>
+            <div class="card">
+              <h3>Code instantly from anywhere</h3>
+              <p>Develop in the cloud and keep momentum on the go.</p>
+            </div>
+            <div class="card">
+              <h3>Shape your toolchain</h3>
+              <p>Build on a flexible platform that adapts to your team.</p>
+            </div>
+          </div>
+          <div class="placeholder" style="margin-top: 24px;">
+            Copilot chat workflow demo video
+          </div>
+          <div class="card" style="margin-top: 24px;">
+            <h3>Your AI partner everywhere</h3>
+            <p>
+              Copilot is ready to work with you at each step of the software development
+              lifecycle.
+            </p>
+            <button class="btn">Explore GitHub Copilot</button>
+          </div>
+          <div class="grid-3" style="margin-top: 24px;">
+            <div class="card">
+              <p>Duolingo boosts developer speed by 25% with GitHub Copilot.</p>
+              <button class="btn">Read customer story</button>
+            </div>
+            <div class="card">
+              <p>2025 Gartner® Magic Quadrant™ for AI Code Assistants.</p>
+              <button class="btn">Read industry report</button>
+            </div>
+            <div class="card">
+              <p>Copilot Ask → Agent workflow updates websites in minutes.</p>
+              <button class="btn">See how it works</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section dark">
+        <div class="container">
+          <h2>Built-in application security where found means fixed</h2>
+          <p>
+            Use AI to find and fix vulnerabilities so your team can ship more secure
+            software faster.
+          </p>
+          <div class="grid-3">
+            <div class="card">
+              <h3>Copilot Autofix</h3>
+              <p>Apply fixes in seconds with secure code suggestions.</p>
+            </div>
+            <div class="card">
+              <h3>Security debt, solved</h3>
+              <p>Run campaigns to reduce application vulnerabilities.</p>
+            </div>
+            <div class="card">
+              <h3>Dependabot + Secret Protection</h3>
+              <p>Keep dependencies up to date and prevent leaked secrets.</p>
+            </div>
+          </div>
+          <div class="grid-3" style="margin-top: 24px;">
+            <div class="card">
+              <h3>Dependencies you can depend on</h3>
+              <p>Update vulnerable dependencies with supported fixes.</p>
+            </div>
+            <div class="card">
+              <h3>Your secrets, your business</h3>
+              <p>Detect, prevent, and remediate leaked secrets across your org.</p>
+            </div>
+            <div class="card">
+              <h3>Campaign progress</h3>
+              <p>Track completion and remaining alerts at a glance.</p>
+            </div>
+          </div>
+          <div class="grid-3" style="margin-top: 24px;">
+            <div class="card">
+              <h3>Explore GitHub Advanced Security</h3>
+              <p>Built-in application security where found means fixed.</p>
+              <button class="btn">Learn more</button>
+            </div>
+            <div class="card">
+              <h3>Learn about GitHub Code Security</h3>
+              <p>Automate triage, fix vulnerabilities, and track progress.</p>
+              <button class="btn">Learn more</button>
+            </div>
+            <div class="card">
+              <h3>Learn about Dependabot</h3>
+              <p>Keep dependencies healthy with automated updates.</p>
+              <button class="btn">Learn more</button>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat">
+              <h3>70% MTTR reduction</h3>
+              <p>With Copilot Autofix.</p>
+            </div>
+            <div class="stat">
+              <h3>8.3M secret leaks</h3>
+              <p>Stopped in the past 12 months.</p>
+            </div>
+            <div class="stat">
+              <h3>97% campaign progress</h3>
+              <p>701 alerts tracked.</p>
+            </div>
+          </div>
+          <div class="placeholder" style="margin-top: 24px;">
+            Security dashboard &amp; Autofix preview
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <h2>Work together, achieve more</h2>
+          <p>
+            From planning and discussion to code review, GitHub keeps your team’s
+            conversation and context next to your code.
+          </p>
+          <div class="grid-3">
+            <div class="card">
+              <h3>Keep track of your tasks</h3>
+              <p>Create issues and manage projects with adaptable workflows.</p>
+            </div>
+            <div class="card">
+              <h3>Share ideas and ask questions</h3>
+              <p>Use discussions and markdown for thoughtful collaboration.</p>
+            </div>
+            <div class="card">
+              <h3>Review code changes together</h3>
+              <p>Merge confidently with built-in code review and checks.</p>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 24px;">
+            <blockquote class="muted" style="margin: 0;">
+              It helps us onboard new software engineers and get them productive right
+              away. We have all our source code, issues, and pull requests in one place…
+            </blockquote>
+            <p style="margin-top: 12px;">Fabian Faulhaber · Mercedes-Benz</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section dark">
+        <div class="container">
+          <h2>From startups to enterprises, GitHub scales with teams of any size</h2>
+          <div class="tabs">
+            <span class="active">By industry</span>
+            <span>By size</span>
+            <span>By use case</span>
+          </div>
+          <div class="grid-3">
+            <div class="card">
+              <h3>Technology</h3>
+              <p>Figma streamlines development and strengthens security.</p>
+              <button class="btn">Read customer story</button>
+            </div>
+            <div class="card">
+              <h3>Automotive</h3>
+              <p>Mercedes-Benz standardizes source code and automates onboarding.</p>
+              <button class="btn">Read customer story</button>
+            </div>
+            <div class="card">
+              <h3>Financial services</h3>
+              <p>Mercado Libre cuts coding time by 50%.</p>
+              <button class="btn">Read customer story</button>
+            </div>
+          </div>
+          <p style="margin-top: 16px;"><a href="#">Explore customer stories</a></p>
+        </div>
+      </section>
+
+      <section class="section dark">
+        <div class="container">
+          <h2>Millions of developers and businesses call GitHub home</h2>
+          <p>
+            Whether you’re scaling your development process or just learning how to code,
+            GitHub is where you belong.
+          </p>
+          <div class="hero-cta">
+            <input class="input" type="email" placeholder="Enter your email" />
+            <button class="btn primary">Sign up for GitHub</button>
+            <button class="btn">Try GitHub Copilot free</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <h2>Footnotes</h2>
+          <ul class="muted">
+            <li>GitHub internal customer data, 2025.</li>
+          </ul>
+          <p><a href="#">Back to top</a></p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container">
+        <div class="card" style="margin-bottom: 32px;">
+          <h3>Subscribe to our developer newsletter</h3>
+          <p>Get tips, technical guides, and best practices. Twice a month.</p>
+          <button class="btn">Subscribe</button>
+        </div>
+        <div class="footer-grid">
+          <div>
+            <h4>Platform</h4>
+            <a href="#">Features</a>
+            <a href="#">Enterprise</a>
+            <a href="#">Copilot</a>
+            <a href="#">Security</a>
+            <a href="#">Pricing</a>
+          </div>
+          <div>
+            <h4>Ecosystem</h4>
+            <a href="#">Developer API</a>
+            <a href="#">Partners</a>
+            <a href="#">Education</a>
+            <a href="#">GitHub Marketplace</a>
+          </div>
+          <div>
+            <h4>Support</h4>
+            <a href="#">Docs</a>
+            <a href="#">Community Forum</a>
+            <a href="#">Premium Support</a>
+            <a href="#">Status</a>
+          </div>
+          <div>
+            <h4>Company</h4>
+            <a href="#">About</a>
+            <a href="#">Customer stories</a>
+            <a href="#">Blog</a>
+            <a href="#">Careers</a>
+          </div>
+          <div>
+            <h4>Legal</h4>
+            <a href="#">Terms</a>
+            <a href="#">Privacy</a>
+            <a href="#">Sitemap</a>
+            <a href="#">Manage cookies</a>
+          </div>
+        </div>
+        <p class="muted" style="margin-top: 32px;">
+          © 2026 GitHub, Inc. · Terms · Privacy · Sitemap
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
