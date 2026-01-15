@@ -174,7 +174,8 @@ daemonCmd
   .command('start')
   .description('Start the daemon process')
   .option('--foreground', 'Run in foreground (do not daemonize)', false)
-  .action(async (options: { foreground: boolean }) => {
+  .option('--headful', 'Launch browser in headful mode', false)
+  .action(async (options: { foreground: boolean; headful: boolean }) => {
     const { running, pid } = isDaemonRunning();
     if (running) {
       console.error(`Daemon already running (PID: ${String(pid)})`);
@@ -200,15 +201,17 @@ daemonCmd
       process.exit(1);
     }
 
+    const daemonArgs = options.headful ? ['--headful'] : [];
+
     if (options.foreground) {
       const { execSync } = await import('node:child_process');
       try {
-        execSync(`node "${daemonPath}"`, { stdio: 'inherit' });
+        execSync(`node "${daemonPath}" ${daemonArgs.join(' ')}`.trim(), { stdio: 'inherit' });
       } catch {
         process.exit(1);
       }
     } else {
-      const child = spawn('node', [daemonPath], {
+      const child = spawn('node', [daemonPath, ...daemonArgs], {
         detached: true,
         stdio: 'ignore',
       });
@@ -319,6 +322,166 @@ daemonCmd
   });
 
 program
+  .command('start')
+  .description('Start daemon, connect, and launch live viewer')
+  .action(async () => {
+    const { running, pid } = isDaemonRunning();
+    if (!running) {
+      const socketPath = getSocketPath();
+      const pidFile = getPidFilePath();
+      if (existsSync(socketPath)) {
+        unlinkSync(socketPath);
+      }
+      if (existsSync(pidFile)) {
+        unlinkSync(pidFile);
+      }
+
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      const daemonPath = resolve(__dirname, '../../daemon/dist/index.js');
+
+      if (!existsSync(daemonPath)) {
+        console.error(`Daemon not found at: ${daemonPath}`);
+        console.error('Run `pnpm build` to build the daemon.');
+        process.exit(1);
+      }
+
+      const child = spawn('node', [daemonPath, '--headful'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      const startDeadlineMs = 10_000;
+      const startedAt = Date.now();
+      const delaysMs = [50, 100, 150, 250, 400, 600, 800, 1000, 1200, 1500, 2000];
+
+      let started = false;
+      for (const delayMs of delaysMs) {
+        try {
+          const response = await withClient(async (client) => {
+            return client.send<{ pong: boolean }>('ping', {});
+          });
+          if (isSuccessResponse(response)) {
+            started = true;
+            break;
+          }
+        } catch {}
+
+        if (Date.now() - startedAt >= startDeadlineMs) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+
+      if (!started) {
+        const elapsedMs = Date.now() - startedAt;
+        console.error(
+          `Failed to start daemon: did not become ready within ${String(startDeadlineMs)}ms (waited ${String(
+            elapsedMs
+          )}ms).`
+        );
+        process.exit(1);
+      }
+
+      const { pid: newPid } = isDaemonRunning();
+      console.log(`Daemon started (PID: ${String(newPid ?? pid ?? 'unknown')})`);
+    }
+
+    const url = 'http://localhost:3000';
+    try {
+      const connectResponse = await withClient(async (client) => {
+        return client.send<SessionInfo>('connect', {
+          url,
+          watchPaths: [],
+          browser: 'chromium',
+          timeoutMs: 30_000,
+          retries: 0,
+          backoffMs: 250,
+          headless: false,
+        });
+      });
+
+      if (!isSuccessResponse(connectResponse)) {
+        console.error(`Connect failed: ${connectResponse.error.message}`);
+        process.exit(1);
+      }
+
+      console.log(`Connected to: ${connectResponse.result.url ?? url}`);
+
+      const viewerResponse = await withClient(async (client) => {
+        return client.send<{ running?: boolean; url?: string }>('viewer.start', { port: 9222 });
+      });
+
+      if (!isSuccessResponse(viewerResponse)) {
+        console.error(`Viewer failed to start: ${viewerResponse.error.message}`);
+        process.exit(1);
+      }
+
+      const viewerUrl = viewerResponse.result.url ?? 'http://127.0.0.1:9222';
+      console.log(`Viewer running at ${viewerUrl}`);
+
+      if (process.platform === 'darwin') {
+        const openProcess = spawn('open', [viewerUrl], { stdio: 'ignore' });
+        openProcess.unref();
+      } else {
+        console.log(`Open ${viewerUrl} in your browser.`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Start failed: ${message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('stop')
+  .description('Stop live viewer, disconnect, and stop daemon')
+  .action(async () => {
+    const { running } = isDaemonRunning();
+    if (!running) {
+      console.log('Daemon is not running');
+      return;
+    }
+
+    try {
+      const viewerResponse = await withClient(async (client) => {
+        return client.send('viewer.stop', {});
+      });
+      if (isSuccessResponse(viewerResponse)) {
+        console.log('Viewer stopped');
+      }
+    } catch {}
+
+    try {
+      const disconnectResponse = await withClient(async (client) => {
+        return client.send('disconnect', {});
+      });
+      if (isSuccessResponse(disconnectResponse)) {
+        console.log('Disconnected');
+      }
+    } catch {}
+
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<{ stopping: boolean }>('daemon.stop', {});
+      });
+
+      if (isSuccessResponse(response)) {
+        console.log('Daemon stopping');
+      } else {
+        console.error(`Error: ${response.error.message}`);
+        process.exit(1);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to stop daemon: ${message}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command('connect')
   .description('Connect to a URL and open a browser session')
   .argument('<url>', 'URL to connect to')
@@ -332,6 +495,7 @@ program
   .option('--timeout <ms>', 'Navigation timeout in milliseconds', '30000')
   .option('--retry <count>', 'Retry failed connections', '0')
   .option('--retry-backoff <ms>', 'Retry backoff in milliseconds', '250')
+  .option('--headful', 'Launch browser in headful mode for this session', false)
   .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
   .action(
     async (
@@ -343,6 +507,7 @@ program
         timeout: string;
         retry: string;
         retryBackoff: string;
+        headful: boolean;
       }
     ) => {
       const format = options.format as OutputFormat;
@@ -351,6 +516,7 @@ program
       const timeoutMs = Number(options.timeout);
       const retries = Number(options.retry);
       const backoffMs = Number(options.retryBackoff);
+      const headless = options.headful ? false : true;
       if (browser !== 'chromium' && browser !== 'firefox' && browser !== 'webkit') {
         renderError('Invalid --browser. Must be chromium, firefox, or webkit.', format);
         return;
@@ -374,6 +540,7 @@ program
         timeoutMs,
         retries,
         backoffMs,
+        headless,
       };
 
       try {
@@ -850,8 +1017,10 @@ program
 program
   .command('watch')
   .description('Stream daemon watch events')
+  .option('--live', 'Emit live screenshot events', false)
+  .option('--interval <ms>', 'Screenshot interval in milliseconds', '2000')
   .option('--format <format>', 'Output format (ndjson)', 'ndjson')
-  .action(async (options: { format: string }) => {
+  .action(async (options: { format: string; live: boolean; interval: string }) => {
     const format = options.format as OutputFormat;
     if (format !== 'ndjson') {
       renderError('watch only supports --format ndjson', format);
@@ -859,6 +1028,12 @@ program
     }
 
     try {
+      const intervalMs = Number(options.interval);
+      if (!Number.isFinite(intervalMs) || intervalMs < 250) {
+        renderError('Invalid --interval. Must be a number >= 250.', format);
+        return;
+      }
+
       await withClient(async (client) => {
         const response = await client.send<{ subscriberId: string }>('watch.subscribe', {});
         if (!isSuccessResponse(response)) {
@@ -868,11 +1043,25 @@ program
 
         const subscriberId = response.result.subscriberId;
 
+        if (options.live) {
+          const configure = await client.send<{ live: boolean }>('watch.configure', {
+            live: true,
+            intervalMs,
+          });
+          if (!isSuccessResponse(configure)) {
+            render(configure, format, () => {});
+            return;
+          }
+        }
+
         let shuttingDown = false;
         const shutdown = async (): Promise<void> => {
           if (shuttingDown) return;
           shuttingDown = true;
           try {
+            if (options.live) {
+              await client.send('watch.configure', { live: false });
+            }
             await client.send('watch.unsubscribe', { subscriberId });
           } catch {}
           process.exit(0);
@@ -893,6 +1082,17 @@ program
             ) {
               return;
             }
+            const event = parsed as { type?: unknown; screenshot?: unknown };
+            if (
+              event &&
+              typeof event === 'object' &&
+              event.type === 'screenshot' &&
+              typeof event.screenshot === 'object' &&
+              event.screenshot
+            ) {
+              process.stdout.write(JSON.stringify(event) + '\n');
+              return;
+            }
           } catch {}
           process.stdout.write(msg + '\n');
         });
@@ -905,6 +1105,96 @@ program
         renderError('Daemon is not running. Start it with: canvas daemon start', format);
       } else {
         renderError(`Failed to watch: ${message}`, format);
+      }
+    }
+  });
+
+program
+  .command('viewer')
+  .description('Manage the live viewer')
+  .command('start')
+  .description('Start the live viewer server')
+  .option('--port <port>', 'Viewer port (default 9222)', '9222')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (options: { port: string; format: string }) => {
+    const format = options.format as OutputFormat;
+    const port = Number(options.port);
+    if (!Number.isFinite(port) || port <= 0) {
+      renderError('Invalid --port. Must be a positive number.', format);
+      return;
+    }
+
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<{ running?: boolean; url?: string }>('viewer.start', { port });
+      });
+      render(response, format, (result: { running?: boolean; url?: string }) => {
+        if (result.url) {
+          console.log(`Viewer running at ${result.url}`);
+        } else if (result.running) {
+          console.log('Viewer running');
+        }
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to start viewer: ${message}`, format);
+      }
+    }
+  });
+
+program
+  .command('viewer')
+  .description('Manage the live viewer')
+  .command('stop')
+  .description('Stop the live viewer server')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (options: { format: string }) => {
+    const format = options.format as OutputFormat;
+    try {
+      const response = await withClient(async (client) => {
+        return client.send('viewer.stop', {});
+      });
+      render(response, format, () => {
+        console.log('Viewer stopped');
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to stop viewer: ${message}`, format);
+      }
+    }
+  });
+
+program
+  .command('viewer')
+  .description('Manage the live viewer')
+  .command('status')
+  .description('Show live viewer status')
+  .option('--format <format>', 'Output format (text|json|yaml|ndjson)', 'text')
+  .action(async (options: { format: string }) => {
+    const format = options.format as OutputFormat;
+    try {
+      const response = await withClient(async (client) => {
+        return client.send<{ running?: boolean; url?: string }>('viewer.status', {});
+      });
+      render(response, format, (result: { running?: boolean; url?: string }) => {
+        if (result.running) {
+          console.log(`Viewer running at ${result.url ?? 'unknown'}`);
+        } else {
+          console.log('Viewer not running');
+        }
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('ENOENT') || message.includes('ECONNREFUSED')) {
+        renderError('Daemon is not running. Start it with: canvas daemon start', format);
+      } else {
+        renderError(`Failed to get viewer status: ${message}`, format);
       }
     }
   });

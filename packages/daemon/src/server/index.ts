@@ -1,6 +1,19 @@
 import { createServer, type Server, type Socket } from 'node:net';
+import { join } from 'node:path';
+import { createServer as createHttpServer } from 'node:http';
 import chokidar, { type FSWatcher } from 'chokidar';
-import { unlinkSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { WebSocketServer, WebSocket } from 'ws';
+import {
+  unlinkSync,
+  existsSync,
+  writeFileSync,
+  chmodSync,
+  readFileSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  rmSync,
+} from 'node:fs';
 import {
   type Request,
   type Response,
@@ -46,11 +59,27 @@ export class DaemonServer {
   private socketPath: string;
   private connections: Set<Socket> = new Set();
   private browserManager: BrowserManager;
+  private launchOptions: { headless?: boolean };
 
   private nextSubscriberId = 1;
   private watchSubscribers: Map<string, WatchSubscriber> = new Map();
   private fsWatcher: FSWatcher | null = null;
   private watchPaths: string[] = [];
+  private watchLive = false;
+  private watchIntervalMs = 2000;
+  private watchIntervalTimer: NodeJS.Timeout | null = null;
+  private liveScreenshotMaxEntries = 20;
+  private liveScreenshotIndex = 0;
+  private liveCwd = process.cwd();
+
+  private viewerHttpServer: ReturnType<typeof createHttpServer> | null = null;
+  private viewerWsServer: WebSocketServer | null = null;
+  private viewerClients: Set<WebSocket> = new Set();
+  private viewerPort: number | null = null;
+  private viewerUrl: string | null = null;
+  private viewerRunning = false;
+  private viewerLastFrame: string | null = null;
+  private viewerCdpSession: import('playwright').CDPSession | null = null;
 
   private uiReadyQuietWindowMs = 250;
   private uiReadyMaxWaitMs = 5_000;
@@ -59,12 +88,16 @@ export class DaemonServer {
   private uiReadyObserverInstalled = false;
   private lastError: import('@wig/canvas-core').ErrorInfo | null = null;
 
-  constructor() {
+  constructor(options?: { headless?: boolean }) {
     this.socketPath = getSocketPath();
+    this.launchOptions = { headless: options?.headless };
     this.browserManager = new BrowserManager(
-      {},
+      { headless: this.launchOptions.headless },
       {
         onUiEvent: (event) => {
+          this.emitWatchEvent(event);
+        },
+        onNavigationEvent: (event) => {
           this.emitWatchEvent(event);
         },
       }
@@ -98,12 +131,15 @@ export class DaemonServer {
 
     await this.browserManager.closeBrowser();
 
+    this.stopViewerInternal();
+
     for (const socket of this.connections) {
       socket.destroy();
     }
     this.connections.clear();
 
     this.watchSubscribers.clear();
+    this.stopLiveInterval();
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -253,6 +289,7 @@ export class DaemonServer {
             watchPaths?: string[];
             browser?: 'chromium' | 'firefox' | 'webkit';
             timeoutMs?: number;
+            headless?: boolean;
           }
         );
 
@@ -271,6 +308,22 @@ export class DaemonServer {
           request.meta.cwd,
           params as { selector: string; out?: string }
         );
+
+      case 'watch.configure':
+        return this.handleWatchConfigure(
+          id,
+          request.meta.cwd,
+          params as { live?: boolean; intervalMs?: number; maxEntries?: number }
+        );
+
+      case 'viewer.start':
+        return this.handleViewerStart(id, params as { port?: number });
+
+      case 'viewer.stop':
+        return this.handleViewerStop(id);
+
+      case 'viewer.status':
+        return this.handleViewerStatus(id);
 
       case 'execute':
         return this.handleExecute(id, params as { code: string; timeoutMs?: number });
@@ -322,6 +375,7 @@ export class DaemonServer {
       timeoutMs?: number;
       retries?: number;
       backoffMs?: number;
+      headless?: boolean;
     }
   ): Promise<Response> {
     if (!params.url) {
@@ -365,6 +419,7 @@ export class DaemonServer {
           watchPaths,
           engine: params.browser,
           timeoutMs: params.timeoutMs,
+          headless: params.headless,
         });
         this.setWatchPaths(watchPaths);
         return this.successResponse(id, {
@@ -1150,11 +1205,18 @@ export class DaemonServer {
   private registerWatchSubscriber(socket: Socket): string {
     const id = `sub_${String(this.nextSubscriberId++)}`;
     this.watchSubscribers.set(id, { id, socket });
+    if (this.watchLive) {
+      this.startLiveInterval(this.liveCwd);
+    }
     return id;
   }
 
   private unregisterWatchSubscriber(subscriberId: string): boolean {
-    return this.watchSubscribers.delete(subscriberId);
+    const removed = this.watchSubscribers.delete(subscriberId);
+    if (this.watchSubscribers.size === 0) {
+      this.stopLiveInterval();
+    }
+    return removed;
   }
 
   private emitWatchEvent(event: unknown): void {
@@ -1171,6 +1233,9 @@ export class DaemonServer {
     if (e && typeof e === 'object' && typeof e.type === 'string') {
       if (e.type === 'hmr_complete' || e.type === 'ui_changed') {
         this.scheduleUiReady();
+      }
+      if (e.type === 'ui_ready') {
+        void this.captureLiveScreenshot(this.liveCwd);
       }
     }
   }
@@ -1291,6 +1356,361 @@ export class DaemonServer {
     }
     const json = JSON.stringify(response);
     socket.write(json + '\n');
+  }
+
+  private startLiveInterval(cwd: string): void {
+    if (!this.watchLive) return;
+    if (this.watchIntervalTimer) return;
+
+    this.watchIntervalTimer = setInterval(() => {
+      void this.captureLiveScreenshot(cwd);
+    }, this.watchIntervalMs);
+  }
+
+  private stopLiveInterval(): void {
+    if (this.watchIntervalTimer) {
+      clearInterval(this.watchIntervalTimer);
+      this.watchIntervalTimer = null;
+    }
+  }
+
+  private rotateLiveScreenshots(liveDir: string): void {
+    if (!existsSync(liveDir)) {
+      return;
+    }
+    const entries = readdirSync(liveDir)
+      .filter((name) => name.endsWith('.png'))
+      .map((name) => ({ name, full: join(liveDir, name) }));
+
+    if (entries.length <= this.liveScreenshotMaxEntries) {
+      return;
+    }
+
+    entries.sort((a, b) => {
+      const aStat = statSync(a.full);
+      const bStat = statSync(b.full);
+      return aStat.mtimeMs - bStat.mtimeMs;
+    });
+
+    const toRemove = entries.slice(0, entries.length - this.liveScreenshotMaxEntries);
+    for (const entry of toRemove) {
+      try {
+        rmSync(entry.full, { force: true });
+      } catch {}
+    }
+  }
+
+  private async captureLiveScreenshot(cwd: string): Promise<void> {
+    if (!this.watchLive || !this.browserManager.isConnected()) return;
+
+    const liveDir = join(cwd, '.canvas', 'live');
+    if (!existsSync(liveDir)) {
+      mkdirSync(liveDir, { recursive: true });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    this.liveScreenshotIndex += 1;
+    const index = String(this.liveScreenshotIndex).padStart(6, '0');
+    const outPath = join(liveDir, `${timestamp}-${index}.png`);
+
+    try {
+      const screenshot = await this.browserManager.takeScreenshot({
+        cwd,
+        path: outPath,
+        inline: true,
+      });
+      this.emitWatchEvent({
+        type: 'screenshot',
+        ts: new Date().toISOString(),
+        screenshot,
+      });
+      this.rotateLiveScreenshots(liveDir);
+    } catch (err) {
+      console.error('Live screenshot failed:', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  private handleWatchConfigure(
+    id: RequestId,
+    cwd: string,
+    params: { live?: boolean; intervalMs?: number; maxEntries?: number }
+  ): Response {
+    this.liveCwd = cwd;
+    if (typeof params.live === 'boolean') {
+      this.watchLive = params.live;
+    }
+    if (Number.isFinite(params.intervalMs) && (params.intervalMs ?? 0) >= 250) {
+      this.watchIntervalMs = params.intervalMs ?? this.watchIntervalMs;
+    }
+    if (Number.isFinite(params.maxEntries) && (params.maxEntries ?? 0) > 0) {
+      this.liveScreenshotMaxEntries = params.maxEntries ?? this.liveScreenshotMaxEntries;
+    }
+
+    if (this.watchLive) {
+      this.startLiveInterval(cwd);
+    } else {
+      this.stopLiveInterval();
+    }
+
+    return this.successResponse(id, {
+      live: this.watchLive,
+      intervalMs: this.watchIntervalMs,
+      maxEntries: this.liveScreenshotMaxEntries,
+    });
+  }
+
+  private async handleViewerStart(id: RequestId, params: { port?: number }): Promise<Response> {
+    if (!this.browserManager.isConnected()) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    const engine = this.browserManager.getEngine();
+    if (engine !== 'chromium') {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INPUT_CONSTRAINT_VIOLATED,
+          message: 'Live viewer is only available for Chromium.',
+          data: {
+            category: 'browser',
+            retryable: false,
+            suggestion: 'Run connect with --browser chromium to enable viewer streaming.',
+          },
+        },
+      };
+    }
+
+    if (this.viewerRunning) {
+      return this.successResponse(id, {
+        running: true,
+        port: this.viewerPort ?? undefined,
+        url: this.viewerUrl ?? undefined,
+        browser: engine,
+      });
+    }
+
+    const port = params.port ?? 9222;
+
+    const page = this.browserManager.getPage();
+    if (!page) {
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.PAGE_NOT_READY,
+          message: 'No page connected. Use connect first.',
+          data: { category: 'browser', retryable: false },
+        },
+      };
+    }
+
+    try {
+      const httpServer = createHttpServer((req, res) => {
+        if (!req.url || req.url === '/' || req.url.startsWith('/index')) {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.end(this.getViewerHtml());
+          return;
+        }
+
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('Not found');
+      });
+
+      const wsServer = new WebSocketServer({ server: httpServer });
+      wsServer.on('connection', (socket: WebSocket) => {
+        this.viewerClients.add(socket);
+        socket.on('close', () => {
+          this.viewerClients.delete(socket);
+        });
+        if (this.viewerLastFrame) {
+          try {
+            socket.send(this.viewerLastFrame);
+          } catch {
+            this.viewerClients.delete(socket);
+          }
+        }
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          reject(err);
+        };
+        httpServer.once('error', onError);
+        httpServer.listen(port, () => {
+          httpServer.off('error', onError);
+          resolve();
+        });
+      });
+
+      const cdpSession = await page.context().newCDPSession(page);
+      this.viewerCdpSession = cdpSession;
+      cdpSession.on('Page.screencastFrame', (event: { data: string; sessionId: number }) => {
+        void cdpSession.send('Page.screencastFrameAck', { sessionId: event.sessionId });
+        const payload = JSON.stringify({ type: 'frame', data: event.data });
+        this.viewerLastFrame = payload;
+        for (const client of this.viewerClients) {
+          try {
+            client.send(payload);
+          } catch {
+            this.viewerClients.delete(client);
+          }
+        }
+      });
+
+      await cdpSession.send('Page.enable').catch(() => {});
+      await cdpSession.send('Page.startScreencast', {
+        format: 'jpeg',
+        quality: 70,
+        maxWidth: 1280,
+        maxHeight: 720,
+        everyNthFrame: 1,
+      });
+
+      this.viewerHttpServer = httpServer;
+      this.viewerWsServer = wsServer;
+      this.viewerPort = port;
+      this.viewerUrl = `http://127.0.0.1:${String(port)}`;
+      this.viewerRunning = true;
+
+      return this.successResponse(id, {
+        running: true,
+        port: this.viewerPort,
+        url: this.viewerUrl,
+        browser: engine,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.stopViewerInternal();
+      return {
+        id,
+        ok: false,
+        error: {
+          code: ErrorCodes.INTERNAL_ERROR,
+          message: `Failed to start viewer: ${message}`,
+          data: { category: 'internal', retryable: false },
+        },
+      };
+    }
+  }
+
+  private stopViewerInternal(): void {
+    if (this.viewerCdpSession) {
+      void this.viewerCdpSession.send('Page.stopScreencast').catch(() => {});
+      this.viewerCdpSession = null;
+    }
+
+    for (const client of this.viewerClients) {
+      try {
+        client.close();
+      } catch {}
+    }
+    this.viewerClients.clear();
+
+    if (this.viewerWsServer) {
+      this.viewerWsServer.close();
+      this.viewerWsServer = null;
+    }
+
+    if (this.viewerHttpServer) {
+      this.viewerHttpServer.close();
+      this.viewerHttpServer = null;
+    }
+
+    this.viewerRunning = false;
+    this.viewerPort = null;
+    this.viewerUrl = null;
+    this.viewerLastFrame = null;
+  }
+
+  private handleViewerStop(id: RequestId): Response {
+    if (!this.viewerRunning) {
+      return this.successResponse(id, { running: false });
+    }
+
+    this.stopViewerInternal();
+    return this.successResponse(id, { running: false });
+  }
+
+  private handleViewerStatus(id: RequestId): Response {
+    return this.successResponse(id, {
+      running: this.viewerRunning,
+      port: this.viewerPort ?? undefined,
+      url: this.viewerUrl ?? undefined,
+      browser: this.browserManager.getEngine(),
+    });
+  }
+
+  private getViewerHtml(): string {
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Canvas Viewer</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #0b0b0b;
+      height: 100%;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #frame {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    #status {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      padding: 4px 8px;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">connecting...</div>
+  <img id="frame" />
+  <script>
+    (function() {
+      const status = document.getElementById('status');
+      const img = document.getElementById('frame');
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(proto + '://' + location.host);
+      ws.addEventListener('open', () => {
+        status.textContent = 'connected';
+      });
+      ws.addEventListener('close', () => {
+        status.textContent = 'disconnected';
+      });
+      ws.addEventListener('message', (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (!payload || payload.type !== 'frame' || !payload.data) return;
+          img.src = 'data:image/jpeg;base64,' + payload.data;
+        } catch {}
+      });
+    })();
+  </script>
+</body>
+</html>`;
   }
 
   private handleDoctor(id: RequestId): Response {

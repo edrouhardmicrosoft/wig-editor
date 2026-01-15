@@ -7,6 +7,7 @@ const { values } = parseArgs({
   options: {
     help: { type: 'boolean', short: 'h' },
     version: { type: 'boolean', short: 'v' },
+    headful: { type: 'boolean' },
   },
   strict: false,
   allowPositionals: true,
@@ -20,6 +21,7 @@ Usage: canvasd [options]
 Options:
   -h, --help      Show this help message
   -v, --version   Show version information
+  --headful       Launch browser in headful mode
 
 The daemon manages browser lifecycle and serves RPC requests
 over a local Unix socket (macOS/Linux) or named pipe (Windows).`);
@@ -34,7 +36,7 @@ if (values.version) {
 
 console.error(`canvasd ${DAEMON_VERSION} starting...`);
 
-const server = new DaemonServer();
+const server = new DaemonServer({ headless: values.headful ? false : true });
 
 const FORCE_SHUTDOWN_TIMEOUT_MS = 10_000;
 

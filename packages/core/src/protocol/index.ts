@@ -32,6 +32,10 @@ export type MethodName =
   | 'diff'
   | 'watch.subscribe'
   | 'watch.unsubscribe'
+  | 'watch.configure'
+  | 'viewer.start'
+  | 'viewer.stop'
+  | 'viewer.status'
   | 'doctor';
 
 export interface Request<P = unknown> {

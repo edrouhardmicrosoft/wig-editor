@@ -168,11 +168,23 @@ export type WatchEventType =
   | 'hmr_start'
   | 'hmr_complete'
   | 'ui_changed'
-  | 'ui_ready';
+  | 'ui_ready'
+  | 'screenshot'
+  | 'navigation';
 
 export interface WatchEvent {
   type: WatchEventType;
   ts: string;
   path?: string;
   duration_ms?: number;
+  url?: string;
+  screenshot?: ScreenshotResult;
+}
+
+export interface ViewerStatus {
+  running: boolean;
+  port?: number;
+  url?: string;
+  browser?: BrowserEngine;
+  error?: string;
 }

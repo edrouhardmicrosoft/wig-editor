@@ -41,6 +41,7 @@ export interface ConnectOptions {
   watchPaths?: string[];
   engine?: BrowserEngine;
   timeoutMs?: number;
+  headless?: boolean;
 }
 
 export interface ScreenshotOptions {
@@ -188,14 +189,20 @@ export class BrowserManager {
   private watchPaths: string[] = [];
   private onUiEvent: ((event: { type: string; ts: string; duration_ms?: number }) => void) | null =
     null;
+  private onNavigationEvent: ((event: { type: string; ts: string; url: string }) => void) | null =
+    null;
   private lastHmrStartTs: number | null = null;
   private defaultTimeoutMs = 30_000;
 
   constructor(
     config: BrowserManagerConfig = {},
-    options?: { onUiEvent?: (event: { type: string; ts: string; duration_ms?: number }) => void }
+    options?: {
+      onUiEvent?: (event: { type: string; ts: string; duration_ms?: number }) => void;
+      onNavigationEvent?: (event: { type: string; ts: string; url: string }) => void;
+    }
   ) {
     this.onUiEvent = options?.onUiEvent ?? null;
+    this.onNavigationEvent = options?.onNavigationEvent ?? null;
     this.config = {
       engine: config.engine ?? 'chromium',
       headless: config.headless ?? true,
@@ -238,8 +245,15 @@ export class BrowserManager {
   }
 
   async connect(url: string, options?: ConnectOptions): Promise<SessionState> {
+    const wantsHeadless = options?.headless;
+
     if (options?.engine && options.engine !== this.config.engine) {
       this.config.engine = options.engine;
+      await this.closeBrowser();
+    }
+
+    if (typeof wantsHeadless === 'boolean' && wantsHeadless !== this.config.headless) {
+      this.config.headless = wantsHeadless;
       await this.closeBrowser();
     }
 
@@ -275,6 +289,7 @@ export class BrowserManager {
 
     this.page = await this.context.newPage();
     this.installUiEventBridge(this.page);
+    this.installNavigationEventBridge(this.page);
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
 
     const currentUrl = this.page.url();
@@ -1103,7 +1118,7 @@ export class BrowserManager {
   }
 
   try {
-    const ws = new WebSocket(\`ws://\${location.host}/_next/webpack-hmr\`);
+    const ws = new WebSocket('ws://' + location.host + '/_next/webpack-hmr');
     let hmrStartTs = null;
     ws.addEventListener('message', (ev) => {
       if (typeof ev.data !== 'string') return;
@@ -1125,9 +1140,18 @@ export class BrowserManager {
   } catch {
   }
 })();
+
 `
       )
       .catch(() => {});
+  }
+
+  private installNavigationEventBridge(page: Page): void {
+    page.on('framenavigated', (frame) => {
+      if (frame.parentFrame()) return;
+      const url = frame.url();
+      this.onNavigationEvent?.({ type: 'navigation', ts: new Date().toISOString(), url });
+    });
   }
 
   private parseFirstAriaNode(yaml: string): { role: string; name?: string } {
