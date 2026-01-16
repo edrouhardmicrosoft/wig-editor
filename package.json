@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "CLI-first canvas toolkit for browser automation and visual development",
+  "license": "MIT",
   "scripts": {
     "build": "tsc --build",
     "typecheck": "pnpm -r run typecheck",

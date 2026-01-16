@@ -39,7 +39,7 @@ B) Install Canvas source into the project (no manual download)
   <projectRoot>/.canvas/tools/canvas
 - If it already exists, ask whether to reuse it, update it, or abort.
 - If it does not exist:
-  - Run: git clone https://github.com/wig/canvas.git "<projectRoot>/.canvas/tools/canvas"
+  - Run: git clone https://github.com/edrouhardmicrosoft/wig-canvas "<projectRoot>/.canvas/tools/canvas"
 
 C) Build Canvas CLI from the cloned repo
 - In <projectRoot>/.canvas/tools/canvas:
